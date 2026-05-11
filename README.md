@@ -56,7 +56,7 @@ docker build -t tmuapp .
 docker run --rm -p 8787:8787 tmuapp
 ```
 
-On pushes to `main`, GitHub Actions publishes `ghcr.io/<owner>/<repo>:latest`. Use the public GitHub repository package for image distribution.
+On pushes to `main`, GitHub Actions publishes `ghcr.io/<owner>/<repo>:latest`, `ghcr.io/<owner>/<repo>:0.1.0`, and `ghcr.io/<owner>/<repo>:v0.1.0`. Use the public GitHub repository package for image distribution.
 
 ## Android
 
