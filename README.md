@@ -6,9 +6,9 @@ tmuapp is a tmux management console with a web UI, HTTP API, and Android client 
 
 - `apps/api` exposes the tmux HTTP API and serves the built web UI in production.
 - `apps/website` is the Vite web console styled from `DESIGN.md`.
-- `apps/android` is Android source for a native API client. Signed release APKs are built in GitHub Actions, not locally.
+- `apps/android` is Jetpack Compose Android source for a native API client. Signed release APKs are built in GitHub Actions, not locally.
 - `packages/utils` contains shared tmux formats, parsers, types, and target validation.
-- `.github/workflows/ci.yml` checks, tests, builds Docker, and builds the Android debug APK artifact.
+- `.github/workflows/ci.yml` checks, tests, builds Docker, and builds the signed Android release APK artifact.
 - `Dockerfile` builds a runtime image with Node, the API, the static web UI, and `tmux` installed.
 
 ## Local Development
@@ -60,15 +60,15 @@ On pushes to `main`, GitHub Actions publishes `ghcr.io/<owner>/<repo>:latest`. U
 
 ## Android
 
-The Android client is intentionally checked in as source. It can call `/health`, list sessions, create and kill sessions, capture panes, send literal input, and send Enter to a pane target.
+The Android client is a Jetpack Compose native app checked in as source. It can call `/health`, list sessions, create and kill sessions, capture panes, send literal input, and send Enter to a pane target.
 
 Do not build the Android app locally for this delivery. GitHub Actions runs:
 
 ```bash
-gradle -p apps/android assembleDebug
+gradle -p apps/android assembleRelease
 ```
 
-and uploads `tmuapp-release-apk` as a workflow artifact. Push builds require the Android signing secrets configured on GitHub.
+and verifies the signed APK before uploading `tmuapp-release-apk` as a workflow artifact. Push builds require the Android signing secrets configured on GitHub.
 
 ## API
 
