@@ -74,10 +74,30 @@ jobs:
           ANDROID_SIGNING_KEY_ALIAS: ${{ secrets.ANDROID_SIGNING_KEY_ALIAS }}
           ANDROID_SIGNING_KEY_PASSWORD: ${{ secrets.ANDROID_SIGNING_KEY_PASSWORD }}
         run: gradle -p apps/android assembleRelease
+      - name: Prepare release APK assets
+        run: |
+          version="$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' apps/android/app/build.gradle.kts)"
+          test -n "$version"
+
+          output_dir="apps/android/app/build/outputs/apk/release"
+          asset_dir="apps/android/release-apks"
+          mkdir -p "$asset_dir"
+
+          cp "$output_dir/app-arm64-v8a-release.apk" "$asset_dir/tmuapp-arm64-v8a-v$version.apk"
+          cp "$output_dir/app-armeabi-v7a-release.apk" "$asset_dir/tmuapp-armeabi-v7a-v$version.apk"
+          cp "$output_dir/app-x86-release.apk" "$asset_dir/tmuapp-x86-v$version.apk"
+          cp "$output_dir/app-x86_64-release.apk" "$asset_dir/tmuapp-x86_64-v$version.apk"
+          cp "$output_dir/app-universal-release.apk" "$asset_dir/tmuapp-v$version.apk"
+
+          ls -lh "$asset_dir"
       - name: Verify release APK signature
         if: ${{ github.event_name == 'push' }}
-        run: $ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)/apksigner verify --print-certs apps/android/app/build/outputs/apk/release/app-release.apk
+        run: |
+          apksigner="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)/apksigner"
+          for apk in apps/android/release-apks/*.apk; do
+            "$apksigner" verify --print-certs "$apk"
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: tmuapp-release-apk
-          path: apps/android/app/build/outputs/apk/release/*.apk
+          path: apps/android/release-apks/*.apk

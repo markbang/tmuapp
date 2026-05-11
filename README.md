@@ -68,7 +68,7 @@ Do not build the Android app locally for this delivery. GitHub Actions runs:
 gradle -p apps/android assembleRelease
 ```
 
-and verifies the signed APK before uploading `tmuapp-release-apk` as a workflow artifact. Push builds require the Android signing secrets configured on GitHub.
+and verifies the signed APKs before uploading `tmuapp-release-apk` as a workflow artifact. The artifact contains universal and ABI-specific APKs named like `tmuapp-v0.1.0.apk`, `tmuapp-arm64-v8a-v0.1.0.apk`, `tmuapp-armeabi-v7a-v0.1.0.apk`, `tmuapp-x86-v0.1.0.apk`, and `tmuapp-x86_64-v0.1.0.apk`. Push builds require the Android signing secrets configured on GitHub.
 
 ## API
 
