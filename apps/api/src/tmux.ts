@@ -128,7 +128,7 @@ export function createTmuxService(run: TmuxRunner = runTmux) {
       const safeTarget = sanitizeTarget(target);
       const safeLines = clampInteger(lines, 1, 5000);
       const [capture, size] = await Promise.all([
-        stdout(run, ["capture-pane", "-e", "-p", "-t", safeTarget]),
+        stdout(run, ["capture-pane", "-e", "-p", "-S", `-${safeLines}`, "-t", safeTarget]),
         stdout(run, [
           "display-message",
           "-p",

@@ -1,17 +1,22 @@
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { extname, join, normalize } from "node:path";
-import { URL } from "node:url";
+import { dirname, extname, join, normalize } from "node:path";
+import { fileURLToPath, URL } from "node:url";
 import { createTmuxService, type TmuxRunner } from "./tmux.js";
 
 export type ApiServerOptions = {
+  authToken?: string;
   runTmux?: TmuxRunner;
   staticDir?: string;
 };
 
+const maxJsonBytes = 64 * 1024;
+const defaultStaticDir = join(dirname(fileURLToPath(import.meta.url)), "../../website/dist");
+
 export function createApiServer(options: ApiServerOptions = {}) {
   const tmux = createTmuxService(options.runTmux);
-  const staticDir = options.staticDir ?? join(process.cwd(), "apps/website/dist");
+  const staticDir = options.staticDir ?? defaultStaticDir;
+  const authToken = options.authToken?.trim();
 
   return createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://localhost");
@@ -24,6 +29,11 @@ export function createApiServer(options: ApiServerOptions = {}) {
 
       if (request.method === "GET" && url.pathname === "/health") {
         send(response, 200, { ok: true, service: "tmuapp-api" });
+        return;
+      }
+
+      if (authToken && url.pathname.startsWith("/api/") && !isAuthorized(request, authToken)) {
+        send(response, 401, { error: "Unauthorized" });
         return;
       }
 
@@ -167,7 +177,7 @@ function contentType(file: string) {
 
 function send(response: ServerResponse, status: number, data: unknown) {
   response.writeHead(status, {
-    "Access-Control-Allow-Headers": "content-type",
+    "Access-Control-Allow-Headers": "authorization,content-type,x-tmuapp-token",
     "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS",
     "Access-Control-Allow-Origin": "*",
     "Content-Type": "application/json; charset=utf-8",
@@ -177,15 +187,35 @@ function send(response: ServerResponse, status: number, data: unknown) {
 
 async function readJson<T>(request: IncomingMessage): Promise<T> {
   const chunks: Buffer[] = [];
+  let size = 0;
+
   for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buffer.byteLength;
+    if (size > maxJsonBytes) {
+      throw new Error("Request body is too large");
+    }
+    chunks.push(buffer);
   }
 
   if (chunks.length === 0) {
     return {} as T;
   }
 
-  return JSON.parse(Buffer.concat(chunks).toString("utf8")) as T;
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8")) as T;
+  } catch {
+    throw new Error("Request body must be valid JSON");
+  }
+}
+
+function isAuthorized(request: IncomingMessage, token: string) {
+  const authorization = request.headers.authorization;
+  if (authorization === `Bearer ${token}`) {
+    return true;
+  }
+
+  return request.headers["x-tmuapp-token"] === token;
 }
 
 function required(value: string | undefined, name: string) {

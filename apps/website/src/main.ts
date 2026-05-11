@@ -16,6 +16,8 @@ type CaptureResult = {
 };
 
 const apiBase = import.meta.env.VITE_API_BASE ?? "";
+const configuredToken = import.meta.env.VITE_TMUAPP_TOKEN as string | undefined;
+const apiTokenStorageKey = "tmuapp.apiToken";
 const apiLabel = apiBase || "same-origin / Vite proxy";
 const app = document.querySelector<HTMLDivElement>("#app")!;
 
@@ -27,6 +29,8 @@ const state: {
   terminal?: WTerm;
   terminalReady?: Promise<WTerm>;
   refreshTimer?: number;
+  resizeTimer?: number;
+  lastResize?: string;
 } = {};
 
 app.innerHTML = `
@@ -40,6 +44,7 @@ app.innerHTML = `
     </div>
     <nav class="actions" aria-label="Global actions">
       <button class="icon-button" id="refresh" type="button" title="Refresh sessions" aria-label="Refresh sessions">R</button>
+      <button class="ghost" id="api-token" type="button">Token</button>
       <button class="primary" id="new-session" type="button">New session</button>
     </nav>
   </header>
@@ -102,6 +107,9 @@ function wireEvents() {
   document
     .querySelector<HTMLButtonElement>("#new-session")!
     .addEventListener("click", () => void createSession());
+  document
+    .querySelector<HTMLButtonElement>("#api-token")!
+    .addEventListener("click", configureApiToken);
   document
     .querySelector<HTMLButtonElement>("#kill-window")!
     .addEventListener("click", () => void killActiveWindow());
@@ -243,7 +251,7 @@ async function renderTerminal(capture: CaptureResult) {
       cursorBlink: true,
       rows: capture.terminal.rows || 34,
       onData: (data) => void sendTerminalData(data),
-      onResize: (columns, rows) => void resizeActivePane(columns, rows),
+      onResize: scheduleResizeActivePane,
     });
     state.terminalReady = state.terminal.init();
   }
@@ -267,8 +275,28 @@ function renderTerminalText(text: string) {
 function fitTerminal() {
   if (state.terminal && state.activePane) {
     updateFitLabel();
-    void resizeActivePane(state.terminal.cols, state.terminal.rows);
+    scheduleResizeActivePane(state.terminal.cols, state.terminal.rows);
   }
+}
+
+function scheduleResizeActivePane(columns: number, rows: number) {
+  if (!state.activePane) {
+    return;
+  }
+
+  const key = String(columns) + "x" + String(rows);
+  if (state.lastResize === key) {
+    return;
+  }
+
+  if (state.resizeTimer) {
+    window.clearTimeout(state.resizeTimer);
+  }
+
+  state.resizeTimer = window.setTimeout(() => {
+    state.resizeTimer = undefined;
+    void resizeActivePane(columns, rows);
+  }, 150);
 }
 
 async function createSession() {
@@ -351,11 +379,19 @@ async function resizeActivePane(columns: number, rows: number) {
     return;
   }
 
+  const key = String(columns) + "x" + String(rows);
+  if (state.lastResize === key) {
+    return;
+  }
+
+  state.lastResize = key;
   updateFitLabel();
   await request(`/api/panes/${encodeURIComponent(state.activePane)}/resize`, {
     method: "POST",
     body: { width: columns, height: rows },
-  }).catch(() => undefined);
+  }).catch(() => {
+    state.lastResize = undefined;
+  });
 }
 
 function updateFitLabel() {
@@ -400,7 +436,7 @@ async function request<T>(
 ): Promise<T> {
   const response = await fetch(`${apiBase}${path}`, {
     method: init.method ?? "GET",
-    headers: init.body ? { "Content-Type": "application/json" } : undefined,
+    headers: requestHeaders(init.body !== undefined),
     body: init.body ? JSON.stringify(init.body) : undefined,
   });
 
@@ -409,6 +445,36 @@ async function request<T>(
   }
 
   return (await response.json()) as T;
+}
+
+function configureApiToken() {
+  const current = localStorage.getItem(apiTokenStorageKey) ?? "";
+  const next = prompt("API token", current);
+  if (next === null) {
+    return;
+  }
+
+  if (next.trim()) {
+    localStorage.setItem(apiTokenStorageKey, next.trim());
+  } else {
+    localStorage.removeItem(apiTokenStorageKey);
+  }
+
+  void refresh();
+}
+
+function requestHeaders(hasBody: boolean) {
+  const headers: Record<string, string> = {};
+  if (hasBody) {
+    headers["Content-Type"] = "application/json";
+  }
+
+  const token = configuredToken?.trim() || localStorage.getItem(apiTokenStorageKey)?.trim();
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  return Object.keys(headers).length ? headers : undefined;
 }
 
 function escapeHtml(value: string) {

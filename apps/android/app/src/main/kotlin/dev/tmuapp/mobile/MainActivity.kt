@@ -99,6 +99,7 @@ private fun TmuappTheme(content: @Composable () -> Unit) {
 @Composable
 private fun TmuappClient() {
     var apiBase by rememberSaveable { mutableStateOf("http://10.0.2.2:8787") }
+    var apiToken by rememberSaveable { mutableStateOf("") }
     var sessionName by rememberSaveable { mutableStateOf("work") }
     var target by rememberSaveable { mutableStateOf("%1") }
     var paneInput by rememberSaveable { mutableStateOf("pwd") }
@@ -108,11 +109,12 @@ private fun TmuappClient() {
 
     fun runRequest(method: String, path: String, body: String? = null) {
         val base = apiBase.trim().trimEnd('/')
+        val token = apiToken.trim().ifBlank { null }
         output = "$method $path..."
         busy = true
         scope.launch {
             output = try {
-                executeRequest(base, method, path, body)
+                executeRequest(base, token, method, path, body)
             } catch (exception: Exception) {
                 exception.toString()
             } finally {
@@ -164,6 +166,7 @@ private fun TmuappClient() {
                 onValueChange = { apiBase = it },
                 keyboardType = KeyboardType.Uri,
             )
+            ClientField("API token", apiToken, { apiToken = it })
             ClientField("Session name", sessionName, { sessionName = it })
             ClientField("tmux target", target, { target = it })
             ClientField("Pane input", paneInput, { paneInput = it })
@@ -281,6 +284,7 @@ private data class Action(
 
 private suspend fun executeRequest(
     apiBase: String,
+    apiToken: String?,
     method: String,
     path: String,
     body: String?,
@@ -289,6 +293,9 @@ private suspend fun executeRequest(
         requestMethod = method
         connectTimeout = 5_000
         readTimeout = 5_000
+        if (apiToken != null) {
+            setRequestProperty("Authorization", "Bearer $apiToken")
+        }
         if (body != null) {
             setRequestProperty("Content-Type", "application/json; charset=utf-8")
             doOutput = true
