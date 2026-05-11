@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "ready": "vp run -r build && vp check && vp run -r test",
+    "ready": "vp run -r build && vp check && vp run -r test && vp run website#e2e",
     "dev": "vp run --parallel -F website -F api dev",
     "prepare": "vp config"
   },

@@ -42,6 +42,7 @@ Open the Vite URL and point it at a host where `tmux` is installed and the API p
 vp run -r build
 vp check
 vp run -r test
+vp run website#e2e
 ```
 
 `vp run ready` runs the same release gate.

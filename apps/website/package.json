@@ -6,14 +6,15 @@
   "scripts": {
     "dev": "vp dev",
     "build": "tsc && vp build",
+    "e2e": "playwright test",
     "preview": "vp preview"
   },
   "dependencies": {
-    "@xterm/addon-fit": "^0.10.0",
-    "@xterm/xterm": "^5.5.0",
+    "@wterm/dom": "catalog:",
     "utils": "workspace:*"
   },
   "devDependencies": {
+    "@playwright/test": "catalog:",
     "typescript": "~6.0.2",
     "vite": "catalog:",
     "vite-plus": "catalog:"

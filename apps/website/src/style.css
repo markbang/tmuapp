@@ -275,8 +275,18 @@ h1 {
   background: #010102;
 }
 
-.xterm {
+.wterm {
+  width: 100%;
   height: 100%;
+  min-height: 0;
+  border-radius: 0;
+  box-shadow: none;
+  --term-bg: #010102;
+  --term-fg: #f7f8f8;
+  --term-cursor: #5e6ad2;
+  --term-font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --term-font-size: 13px;
+  --term-line-height: 1.15;
 }
 
 .input-row {

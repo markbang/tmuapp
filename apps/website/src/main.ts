@@ -1,6 +1,5 @@
-import "@xterm/xterm/css/xterm.css";
-import { FitAddon } from "@xterm/addon-fit";
-import { Terminal } from "@xterm/xterm";
+import "@wterm/dom/css";
+import { WTerm } from "@wterm/dom";
 import { type TmuxPane, type TmuxSnapshot, type TmuxWindow } from "utils";
 import "./style.css";
 
@@ -23,8 +22,8 @@ const state: {
   activeSession?: string;
   activeWindow?: string;
   activePane?: string;
-  terminal?: Terminal;
-  fit?: FitAddon;
+  terminal?: WTerm;
+  terminalReady?: Promise<WTerm>;
   refreshTimer?: number;
 } = {};
 
@@ -81,7 +80,7 @@ app.innerHTML = `
       <section class="metrics">
         <h2>Renderer</h2>
         <dl>
-          <div><dt>Mode</dt><dd>xterm.js ANSI</dd></div>
+          <div><dt>Mode</dt><dd>wterm ANSI</dd></div>
           <div><dt>Fit</dt><dd id="fit-size">pending</dd></div>
           <div><dt>API</dt><dd>${apiLabel}</dd></div>
         </dl>
@@ -157,7 +156,7 @@ async function refreshActivePane() {
   const capture = await request<CaptureResult>(
     `/api/panes/${encodeURIComponent(state.activePane)}/capture?lines=240`,
   );
-  renderTerminal(capture);
+  await renderTerminal(capture);
 }
 
 function renderNavigation() {
@@ -233,36 +232,28 @@ function renderNavigation() {
     : "";
 }
 
-function renderTerminal(capture: CaptureResult) {
+async function renderTerminal(capture: CaptureResult) {
   if (!state.terminal) {
-    state.terminal = new Terminal({
-      allowProposedApi: false,
-      convertEol: true,
-      cursorBlink: false,
-      disableStdin: true,
-      fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", monospace',
-      fontSize: 13,
-      lineHeight: 1.15,
+    const element = document.querySelector<HTMLDivElement>("#terminal")!;
+    state.terminal = new WTerm(element, {
+      autoResize: true,
+      cols: capture.terminal.columns || 120,
+      cursorBlink: true,
       rows: capture.terminal.rows || 34,
-      theme: {
-        background: "#010102",
-        foreground: "#f7f8f8",
-        cursor: "#5e6ad2",
-        selectionBackground: "#34343a",
-      },
+      onData: (data) => void sendTerminalData(data),
+      onResize: (columns, rows) => void resizeActivePane(columns, rows),
     });
-    state.fit = new FitAddon();
-    state.terminal.loadAddon(state.fit);
-    state.terminal.open(document.querySelector<HTMLDivElement>("#terminal")!);
+    state.terminalReady = state.terminal.init();
   }
 
-  state.terminal.reset();
+  await state.terminalReady;
+  state.terminal.write("\x1b[2J\x1b[H");
   state.terminal.write(capture.ansi.replaceAll("\n", "\r\n"));
-  fitTerminal();
+  updateFitLabel();
 }
 
 function renderTerminalText(text: string) {
-  renderTerminal({
+  void renderTerminal({
     target: state.activePane ?? "",
     ansi: text,
     lines: text.split("\n").length,
@@ -271,14 +262,9 @@ function renderTerminalText(text: string) {
 }
 
 function fitTerminal() {
-  state.fit?.fit();
   if (state.terminal && state.activePane) {
-    document.querySelector("#fit-size")!.textContent =
-      `${state.terminal.cols}x${state.terminal.rows}`;
-    void request(`/api/panes/${encodeURIComponent(state.activePane)}/resize`, {
-      method: "POST",
-      body: { width: state.terminal.cols, height: state.terminal.rows },
-    }).catch(() => undefined);
+    updateFitLabel();
+    void resizeActivePane(state.terminal.cols, state.terminal.rows);
   }
 }
 
@@ -325,6 +311,26 @@ async function sendInput(data: string) {
   await refreshActivePane();
 }
 
+async function sendTerminalData(data: string) {
+  if (!state.activePane || data.length === 0) {
+    return;
+  }
+
+  const chunks = data.split(/(\r)/u).filter(Boolean);
+  for (const chunk of chunks) {
+    if (chunk === "\r") {
+      await sendKeys(["Enter"]);
+    } else {
+      await request(`/api/panes/${encodeURIComponent(state.activePane)}/input`, {
+        method: "POST",
+        body: { data: chunk },
+      });
+    }
+  }
+
+  await refreshActivePane();
+}
+
 async function sendKeys(keys: string[]) {
   if (!state.activePane) {
     return;
@@ -335,6 +341,27 @@ async function sendKeys(keys: string[]) {
     body: { keys },
   });
   await refreshActivePane();
+}
+
+async function resizeActivePane(columns: number, rows: number) {
+  if (!state.activePane) {
+    return;
+  }
+
+  updateFitLabel();
+  await request(`/api/panes/${encodeURIComponent(state.activePane)}/resize`, {
+    method: "POST",
+    body: { width: columns, height: rows },
+  }).catch(() => undefined);
+}
+
+function updateFitLabel() {
+  if (!state.terminal) {
+    return;
+  }
+
+  document.querySelector("#fit-size")!.textContent =
+    `${state.terminal.cols}x${state.terminal.rows}`;
 }
 
 function currentWindows(): TmuxWindow[] {

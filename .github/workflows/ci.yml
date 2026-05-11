@@ -22,6 +22,8 @@ jobs:
       - run: pnpm exec vp run -r build
       - run: pnpm exec vp check
       - run: pnpm exec vp run -r test
+      - run: pnpm -F website exec playwright install --with-deps chromium
+      - run: pnpm exec vp run website#e2e
 
   docker:
     name: Docker image
