@@ -1,0 +1,10 @@
+services:
+  tmuapp:
+    build: .
+    image: ghcr.io/bangwu/tmuapp:local
+    ports:
+      - "8787:8787"
+    environment:
+      PORT: "8787"
+    volumes:
+      - /tmp:/tmp

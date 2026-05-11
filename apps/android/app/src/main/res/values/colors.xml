@@ -1,0 +1,8 @@
+<resources>
+    <color name="canvas">#010102</color>
+    <color name="surface_1">#0F1011</color>
+    <color name="surface_2">#141516</color>
+    <color name="primary">#5E6AD2</color>
+    <color name="ink">#F7F8F8</color>
+    <color name="ink_muted">#8A8F98</color>
+</resources>
