@@ -13,6 +13,7 @@ The API is a local HTTP facade over the `tmux` command. It is designed for the w
 - `GET /api/panes/:target/capture?lines=240` returns ANSI pane output and terminal dimensions.
 - `POST /api/panes/:target/input` with `{ "data": "literal text" }` sends literal input.
 - `POST /api/panes/:target/keys` with `{ "keys": ["Enter"] }` sends tmux key names.
+- `POST /api/panes/:target/split` with `{ "direction": "horizontal" }` splits a pane. Direction can be `horizontal` or `vertical`.
 - `POST /api/panes/:target/resize` with `{ "width": 120, "height": 34 }` resizes the pane for fitted terminal rendering.
 
 Targets are tmux ids or tmux target strings such as `%1`, `@1`, `$1`, or `work:0.0`.

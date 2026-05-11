@@ -77,6 +77,17 @@ export function createApiServer(options: ApiServerOptions = {}) {
         return;
       }
 
+      const paneSplitTarget = match(url.pathname, /^\/api\/panes\/(.+)\/split$/);
+      if (request.method === "POST" && paneSplitTarget) {
+        const body = await readJson<{ direction?: "horizontal" | "vertical" }>(request);
+        send(
+          response,
+          201,
+          await tmux.splitPane(decodeURIComponent(paneSplitTarget), body.direction ?? "horizontal"),
+        );
+        return;
+      }
+
       const paneInputTarget = match(url.pathname, /^\/api\/panes\/(.+)\/input$/);
       if (request.method === "POST" && paneInputTarget) {
         const body = await readJson<{ data?: string }>(request);

@@ -87,6 +87,12 @@ export function createTmuxService(run: TmuxRunner = runTmux) {
       return this.snapshot();
     },
 
+    async splitPane(target: string, direction: "horizontal" | "vertical") {
+      const flag = direction === "horizontal" ? "-h" : "-v";
+      await run(["split-window", flag, "-t", sanitizeTarget(target)]);
+      return this.snapshot();
+    },
+
     async sendInput(target: string, data: string) {
       await run(["send-keys", "-t", sanitizeTarget(target), "-l", data]);
       return { ok: true };

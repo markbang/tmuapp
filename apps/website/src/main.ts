@@ -305,7 +305,10 @@ async function splitPane(direction: "-h" | "-v") {
     return;
   }
 
-  await sendKeys(["C-b", direction === "-h" ? "%" : '"']);
+  await request(`/api/panes/${encodeURIComponent(state.activePane)}/split`, {
+    method: "POST",
+    body: { direction: direction === "-h" ? "horizontal" : "vertical" },
+  });
   await refresh();
 }
 

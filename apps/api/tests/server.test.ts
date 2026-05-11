@@ -85,4 +85,15 @@ describe("api server", () => {
     expect(data.ansi).toContain("ready");
     expect(data.terminal).toEqual({ rows: 34, columns: 120 });
   });
+
+  test("splits panes through a tmux command", async () => {
+    const response = await fetch(`${baseUrl}/api/panes/%251/split`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ direction: "vertical" }),
+    });
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({ sessions: [{ name: "work" }] });
+  });
 });
