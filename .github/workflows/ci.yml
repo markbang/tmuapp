@@ -173,8 +173,7 @@ jobs:
           profile: pixel_6
           disable-animations: true
           script: |
-            bash <<'BASH'
-            set -euo pipefail
+            set -eu
             mkdir -p apps/android/build/reports
             trap 'adb logcat -d -t 2000 > apps/android/build/reports/release-launch-logcat.txt || true; adb shell dumpsys activity activities > apps/android/build/reports/release-launch-activity.txt || true' EXIT
 
@@ -190,7 +189,6 @@ jobs:
               adb shell dumpsys activity activities | grep -E 'mResumedActivity|topResumedActivity|ResumedActivity' | grep dev.tmuapp.mobile
               adb uninstall dev.tmuapp.mobile
             done
-            BASH
       - uses: actions/upload-artifact@v4
         if: always()
         with:
