@@ -171,23 +171,7 @@ jobs:
           api-level: 35
           arch: x86_64
           disable-animations: false
-          script: |
-            set -eu
-            mkdir -p apps/android/build/reports
-            trap 'adb logcat -d -t 2000 > apps/android/build/reports/release-launch-logcat.txt || true; adb shell dumpsys activity activities > apps/android/build/reports/release-launch-activity.txt || true' EXIT
-
-            version="$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' apps/android/app/build.gradle.kts)"
-            for apk in "apps/android/release-apks/tmuapp-v$version.apk" "apps/android/release-apks/tmuapp-x86_64-v$version.apk"; do
-              test -f "$apk"
-              adb logcat -c
-              adb install -r "$apk"
-              adb shell am force-stop dev.tmuapp.mobile || true
-              adb shell am start -W -n dev.tmuapp.mobile/.MainActivity
-              sleep 4
-              adb shell pidof dev.tmuapp.mobile | tr -d '\r' | grep -E '^[0-9]+'
-              adb shell dumpsys activity activities | grep -E 'mResumedActivity|topResumedActivity|ResumedActivity' | grep dev.tmuapp.mobile
-              adb uninstall dev.tmuapp.mobile
-            done
+          script: bash apps/android/ci/smoke-release.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
