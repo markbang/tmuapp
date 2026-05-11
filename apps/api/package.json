@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "dev": "node --watch --experimental-strip-types src/index.ts",
+    "dev": "node --watch --import jiti/register src/index.ts",
     "start": "node dist/index.js",
     "test": "vp test",
     "check": "vp check"
@@ -15,6 +15,7 @@
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "jiti": "^2.7.0",
     "typescript": "catalog:",
     "vite-plus": "catalog:"
   }

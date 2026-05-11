@@ -14,7 +14,8 @@ type CaptureResult = {
   };
 };
 
-const apiBase = import.meta.env.VITE_API_BASE ?? "http://localhost:8787";
+const apiBase = import.meta.env.VITE_API_BASE ?? "";
+const apiLabel = apiBase || "same-origin / Vite proxy";
 const app = document.querySelector<HTMLDivElement>("#app")!;
 
 const state: {
@@ -82,7 +83,7 @@ app.innerHTML = `
         <dl>
           <div><dt>Mode</dt><dd>xterm.js ANSI</dd></div>
           <div><dt>Fit</dt><dd id="fit-size">pending</dd></div>
-          <div><dt>API</dt><dd>${apiBase}</dd></div>
+          <div><dt>API</dt><dd>${apiLabel}</dd></div>
         </dl>
       </section>
     </aside>
@@ -143,7 +144,7 @@ async function refresh() {
     renderNavigation();
     await refreshActivePane();
   } catch (error) {
-    renderTerminalText(`Unable to reach API at ${apiBase}\n${message(error)}`);
+    renderTerminalText(`Unable to reach API at ${apiLabel}\n${message(error)}`);
   }
 }
 

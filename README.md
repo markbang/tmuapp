@@ -19,16 +19,19 @@ Install dependencies after cloning or pulling:
 vp install
 ```
 
-Run the API:
+Run the API and web console together:
+
+```bash
+vp run dev
+```
+
+`vp run dev` starts the API on `http://localhost:8787` and the Vite web console on `http://localhost:5173` with `/api` and `/health` proxied to the API.
+
+Run them separately when debugging one side:
 
 ```bash
 vp run api#dev
-```
-
-Run the web console:
-
-```bash
-VITE_API_BASE=http://localhost:8787 vp run website#dev
+vp run website#dev
 ```
 
 Open the Vite URL and point it at a host where `tmux` is installed and the API process has access to the tmux server/socket.
