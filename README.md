@@ -6,7 +6,7 @@ tmuapp is a tmux management console with a web UI, HTTP API, and Android client 
 
 - `apps/api` exposes the tmux HTTP API and serves the built web UI in production.
 - `apps/website` is the Vite web console styled from `DESIGN.md`.
-- `apps/android` is Android source for a native API client. Build APKs in GitHub Actions, not locally.
+- `apps/android` is Android source for a native API client. Signed release APKs are built in GitHub Actions, not locally.
 - `packages/utils` contains shared tmux formats, parsers, types, and target validation.
 - `.github/workflows/ci.yml` checks, tests, builds Docker, and builds the Android debug APK artifact.
 - `Dockerfile` builds a runtime image with Node, the API, the static web UI, and `tmux` installed.
@@ -68,7 +68,7 @@ Do not build the Android app locally for this delivery. GitHub Actions runs:
 gradle -p apps/android assembleDebug
 ```
 
-and uploads `tmuapp-debug-apk` as a workflow artifact.
+and uploads `tmuapp-release-apk` as a workflow artifact. Push builds require the Android signing secrets configured on GitHub.
 
 ## API
 

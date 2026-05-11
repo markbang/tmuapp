@@ -32,7 +32,7 @@ beforeEach(async () => {
     }
 
     if (command === "display-message") {
-      return { stdout: "34\t120\n", stderr: "" };
+      return { stdout: "34\t120\t7\t12\n", stderr: "" };
     }
 
     return { stdout: "", stderr: "" };
@@ -83,7 +83,7 @@ describe("api server", () => {
 
     expect(response.status).toBe(200);
     expect(data.ansi).toContain("ready");
-    expect(data.terminal).toEqual({ rows: 34, columns: 120 });
+    expect(data.terminal).toEqual({ rows: 34, columns: 120, cursorRow: 7, cursorColumn: 12 });
   });
 
   test("splits panes through a tmux command", async () => {

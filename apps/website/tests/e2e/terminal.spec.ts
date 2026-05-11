@@ -31,7 +31,9 @@ test("wterm renders tmux capture and sends terminal keyboard input", async ({ pa
 
   await expect(page.getByText("wterm ANSI")).toBeVisible();
   await expect(page.locator("#terminal")).toContainText("ready");
+  await expect(page.locator("#terminal")).toContainText("prompt> waiting");
   await expect(page.locator("#terminal")).toContainText("from mocked tmux");
+  await expectTerminalCursorNearPrompt(page);
 
   await page.locator("#terminal").click();
   await page.keyboard.type("whoami");
@@ -72,9 +74,9 @@ async function mockTmuxApi(
     await route.fulfill({
       json: {
         target: "%1",
-        ansi: "\u001b[32mready\u001b[0m\r\nfrom mocked tmux\r\n$ ",
+        ansi: "\u001b[32mready\u001b[0m\r\nprompt> waiting\r\nfrom mocked tmux",
         lines: 240,
-        terminal: { rows: 34, columns: 120 },
+        terminal: { rows: 34, columns: 120, cursorRow: 1, cursorColumn: 8 },
       },
     });
   });
@@ -102,4 +104,20 @@ async function mockTmuxApi(
   await page.route("**/api/panes/*/split", async (route) => {
     await route.fulfill({ json: snapshot });
   });
+}
+
+async function expectTerminalCursorNearPrompt(page: Page) {
+  await expect.poll(async () => page.locator(".term-cursor").count()).toBe(1);
+  const cursor = page.locator(".term-cursor");
+  const promptRow = page.locator(".term-row").filter({ hasText: "prompt> waiting" });
+
+  await expect(promptRow).toHaveCount(1);
+
+  const [cursorBox, promptBox] = await Promise.all([cursor.boundingBox(), promptRow.boundingBox()]);
+
+  expect(cursorBox).not.toBeNull();
+  expect(promptBox).not.toBeNull();
+
+  expect(Math.abs(cursorBox!.y - promptBox!.y)).toBeLessThan(3);
+  expect(cursorBox!.x - promptBox!.x).toBeGreaterThan(40);
 }

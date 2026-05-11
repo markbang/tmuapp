@@ -22,6 +22,8 @@ export type CaptureResult = {
   terminal: {
     rows: number;
     columns: number;
+    cursorRow: number;
+    cursorColumn: number;
   };
 };
 
@@ -126,10 +128,18 @@ export function createTmuxService(run: TmuxRunner = runTmux) {
       const safeTarget = sanitizeTarget(target);
       const safeLines = clampInteger(lines, 1, 5000);
       const [capture, size] = await Promise.all([
-        stdout(run, ["capture-pane", "-e", "-p", "-J", "-t", safeTarget, "-S", `-${safeLines}`]),
-        stdout(run, ["display-message", "-p", "-t", safeTarget, "#{pane_height}\t#{pane_width}"]),
+        stdout(run, ["capture-pane", "-e", "-p", "-t", safeTarget]),
+        stdout(run, [
+          "display-message",
+          "-p",
+          "-t",
+          safeTarget,
+          "#{pane_height}\t#{pane_width}\t#{cursor_y}\t#{cursor_x}",
+        ]),
       ]);
-      const [rows = "0", columns = "0"] = size.trim().split("\t");
+      const [rows = "0", columns = "0", cursorRow = "0", cursorColumn = "0"] = size
+        .trim()
+        .split("\t");
 
       return {
         target: safeTarget,
@@ -138,6 +148,8 @@ export function createTmuxService(run: TmuxRunner = runTmux) {
         terminal: {
           rows: Number.parseInt(rows, 10) || 0,
           columns: Number.parseInt(columns, 10) || 0,
+          cursorRow: Number.parseInt(cursorRow, 10) || 0,
+          cursorColumn: Number.parseInt(cursorColumn, 10) || 0,
         },
       };
     },

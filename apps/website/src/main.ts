@@ -10,6 +10,8 @@ type CaptureResult = {
   terminal: {
     rows: number;
     columns: number;
+    cursorRow: number;
+    cursorColumn: number;
   };
 };
 
@@ -249,6 +251,7 @@ async function renderTerminal(capture: CaptureResult) {
   await state.terminalReady;
   state.terminal.write("\x1b[2J\x1b[H");
   state.terminal.write(capture.ansi.replaceAll("\n", "\r\n"));
+  state.terminal.write(cursorPosition(capture));
   updateFitLabel();
 }
 
@@ -257,7 +260,7 @@ function renderTerminalText(text: string) {
     target: state.activePane ?? "",
     ansi: text,
     lines: text.split("\n").length,
-    terminal: { rows: 34, columns: 120 },
+    terminal: { rows: 34, columns: 120, cursorRow: 0, cursorColumn: 0 },
   });
 }
 
@@ -362,6 +365,17 @@ function updateFitLabel() {
 
   document.querySelector("#fit-size")!.textContent =
     `${state.terminal.cols}x${state.terminal.rows}`;
+}
+
+function cursorPosition(capture: CaptureResult) {
+  const row = clamp(capture.terminal.cursorRow, 0, Math.max(capture.terminal.rows - 1, 0));
+  const column = clamp(capture.terminal.cursorColumn, 0, Math.max(capture.terminal.columns - 1, 0));
+
+  return `\x1b[${row + 1};${column + 1}H`;
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
 }
 
 function currentWindows(): TmuxWindow[] {
