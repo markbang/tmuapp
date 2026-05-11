@@ -68,12 +68,7 @@ jobs:
           test -n "$ANDROID_SIGNING_KEYSTORE_BASE64"
           echo "$ANDROID_SIGNING_KEYSTORE_BASE64" | base64 --decode > apps/android/release.keystore
       - name: Build release APK
-        env:
-          ANDROID_SIGNING_STORE_FILE: ${{ github.workspace }}/apps/android/release.keystore
-          ANDROID_SIGNING_STORE_PASSWORD: ${{ secrets.ANDROID_SIGNING_STORE_PASSWORD }}
-          ANDROID_SIGNING_KEY_ALIAS: ${{ secrets.ANDROID_SIGNING_KEY_ALIAS }}
-          ANDROID_SIGNING_KEY_PASSWORD: ${{ secrets.ANDROID_SIGNING_KEY_PASSWORD }}
-        run: gradle -p apps/android assembleRelease
+        run: gradle -p apps/android assembleRelease --stacktrace
       - name: Prepare release APK assets
         run: |
           version="$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' apps/android/app/build.gradle.kts)"
@@ -83,13 +78,66 @@ jobs:
           asset_dir="apps/android/release-apks"
           mkdir -p "$asset_dir"
 
-          cp "$output_dir/app-arm64-v8a-release.apk" "$asset_dir/tmuapp-arm64-v8a-v$version.apk"
-          cp "$output_dir/app-armeabi-v7a-release.apk" "$asset_dir/tmuapp-armeabi-v7a-v$version.apk"
-          cp "$output_dir/app-x86-release.apk" "$asset_dir/tmuapp-x86-v$version.apk"
-          cp "$output_dir/app-x86_64-release.apk" "$asset_dir/tmuapp-x86_64-v$version.apk"
-          cp "$output_dir/app-universal-release.apk" "$asset_dir/tmuapp-v$version.apk"
+          source_apk="$output_dir/app-release-unsigned.apk"
+          if [ ! -f "$source_apk" ]; then
+            source_apk="$output_dir/app-release.apk"
+          fi
+          test -f "$source_apk"
+
+          cp "$source_apk" "$asset_dir/tmuapp-v$version.apk"
+          python3 - "$source_apk" "$asset_dir" "$version" <<'PY'
+          import sys
+          import zipfile
+          from pathlib import Path
+
+          source = Path(sys.argv[1])
+          asset_dir = Path(sys.argv[2])
+          version = sys.argv[3]
+          targets = {
+              "arm64-v8a": f"tmuapp-arm64-v8a-v{version}.apk",
+              "armeabi-v7a": f"tmuapp-armeabi-v7a-v{version}.apk",
+              "x86": f"tmuapp-x86-v{version}.apk",
+              "x86_64": f"tmuapp-x86_64-v{version}.apk",
+          }
+
+          with zipfile.ZipFile(source, "r") as src:
+              entries = [(info, src.read(info.filename)) for info in src.infolist()]
+
+          for abi, filename in targets.items():
+              with zipfile.ZipFile(asset_dir / filename, "w") as dest:
+                  for info, data in entries:
+                      parts = info.filename.split("/")
+                      if parts[0] == "META-INF":
+                          continue
+                      if parts[0] == "lib" and len(parts) > 2 and parts[1] != abi:
+                          continue
+                      dest.writestr(info, data)
+          PY
 
           ls -lh "$asset_dir"
+      - name: Sign release APK assets
+        if: ${{ github.event_name == 'push' }}
+        env:
+          ANDROID_SIGNING_STORE_FILE: ${{ github.workspace }}/apps/android/release.keystore
+          ANDROID_SIGNING_STORE_PASSWORD: ${{ secrets.ANDROID_SIGNING_STORE_PASSWORD }}
+          ANDROID_SIGNING_KEY_ALIAS: ${{ secrets.ANDROID_SIGNING_KEY_ALIAS }}
+          ANDROID_SIGNING_KEY_PASSWORD: ${{ secrets.ANDROID_SIGNING_KEY_PASSWORD }}
+        run: |
+          build_tools="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
+          for apk in apps/android/release-apks/*.apk; do
+            aligned="${apk%.apk}-aligned.apk"
+            signed="${apk%.apk}-signed.apk"
+            "$build_tools/zipalign" -f -p 4 "$apk" "$aligned"
+            "$build_tools/apksigner" sign \
+              --ks "$ANDROID_SIGNING_STORE_FILE" \
+              --ks-pass "pass:$ANDROID_SIGNING_STORE_PASSWORD" \
+              --ks-key-alias "$ANDROID_SIGNING_KEY_ALIAS" \
+              --key-pass "pass:$ANDROID_SIGNING_KEY_PASSWORD" \
+              --out "$signed" \
+              "$aligned"
+            mv "$signed" "$apk"
+            rm "$aligned"
+          done
       - name: Verify release APK signature
         if: ${{ github.event_name == 'push' }}
         run: |
