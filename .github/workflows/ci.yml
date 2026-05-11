@@ -76,6 +76,19 @@ jobs:
         run: |
           test -n "$ANDROID_SIGNING_KEYSTORE_BASE64"
           echo "$ANDROID_SIGNING_KEYSTORE_BASE64" | base64 --decode > apps/android/release.keystore
+      - name: Generate temporary release signing key
+        if: ${{ github.event_name != 'push' }}
+        run: |
+          keytool -genkeypair \
+            -storetype PKCS12 \
+            -keystore apps/android/release.keystore \
+            -storepass android \
+            -alias tmuapp-ci \
+            -keypass android \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=tmuapp CI,O=tmuapp,C=US"
       - name: Build release APK
         run: gradle -p apps/android assembleRelease --stacktrace
       - name: Prepare release APK assets
@@ -125,12 +138,11 @@ jobs:
 
           ls -lh "$asset_dir"
       - name: Sign release APK assets
-        if: ${{ github.event_name == 'push' }}
         env:
           ANDROID_SIGNING_STORE_FILE: ${{ github.workspace }}/apps/android/release.keystore
-          ANDROID_SIGNING_STORE_PASSWORD: ${{ secrets.ANDROID_SIGNING_STORE_PASSWORD }}
-          ANDROID_SIGNING_KEY_ALIAS: ${{ secrets.ANDROID_SIGNING_KEY_ALIAS }}
-          ANDROID_SIGNING_KEY_PASSWORD: ${{ secrets.ANDROID_SIGNING_KEY_PASSWORD }}
+          ANDROID_SIGNING_STORE_PASSWORD: ${{ github.event_name == 'push' && secrets.ANDROID_SIGNING_STORE_PASSWORD || 'android' }}
+          ANDROID_SIGNING_KEY_ALIAS: ${{ github.event_name == 'push' && secrets.ANDROID_SIGNING_KEY_ALIAS || 'tmuapp-ci' }}
+          ANDROID_SIGNING_KEY_PASSWORD: ${{ github.event_name == 'push' && secrets.ANDROID_SIGNING_KEY_PASSWORD || 'android' }}
         run: |
           build_tools="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
           for apk in apps/android/release-apks/*.apk; do
@@ -148,12 +160,41 @@ jobs:
             rm "$aligned"
           done
       - name: Verify release APK signature
-        if: ${{ github.event_name == 'push' }}
         run: |
           apksigner="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)/apksigner"
           for apk in apps/android/release-apks/*.apk; do
             "$apksigner" verify --print-certs "$apk"
           done
+      - name: Smoke test signed release APK
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: |
+            set -euo pipefail
+            mkdir -p apps/android/build/reports
+            trap 'adb logcat -d -t 2000 > apps/android/build/reports/release-launch-logcat.txt || true; adb shell dumpsys activity activities > apps/android/build/reports/release-launch-activity.txt || true' EXIT
+
+            version="$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' apps/android/app/build.gradle.kts)"
+            for apk in "apps/android/release-apks/tmuapp-v$version.apk" "apps/android/release-apks/tmuapp-x86_64-v$version.apk"; do
+              test -f "$apk"
+              adb logcat -c
+              adb install -r "$apk"
+              adb shell am force-stop dev.tmuapp.mobile || true
+              adb shell am start -W -n dev.tmuapp.mobile/.MainActivity
+              sleep 4
+              adb shell pidof dev.tmuapp.mobile | tr -d '\r' | grep -E '^[0-9]+'
+              adb shell dumpsys activity activities | grep -E 'mResumedActivity|topResumedActivity|ResumedActivity' | grep dev.tmuapp.mobile
+              adb uninstall dev.tmuapp.mobile
+            done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-release-launch-diagnostics
+          path: apps/android/build/reports/release-launch-*.txt
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         with:
           name: tmuapp-release-apk
