@@ -7,7 +7,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml vite.config.ts tsconfig.jso
 COPY apps/api/package.json apps/api/package.json
 COPY apps/website/package.json apps/website/package.json
 COPY packages/utils/package.json packages/utils/package.json
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile --ignore-scripts
 
 FROM deps AS build
 COPY . .
