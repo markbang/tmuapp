@@ -10,11 +10,17 @@
     "preview": "vp preview"
   },
   "dependencies": {
+    "@heroui/react": "catalog:",
     "@wterm/dom": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
     "utils": "workspace:*"
   },
   "devDependencies": {
     "@playwright/test": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
     "typescript": "~6.0.2",
     "vite": "catalog:",
     "vite-plus": "catalog:"

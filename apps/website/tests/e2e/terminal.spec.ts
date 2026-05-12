@@ -58,6 +58,65 @@ test("wterm resize updates the tmux pane dimensions", async ({ page }) => {
   await expect.poll(() => resizePayloads.at(-1)).not.toEqual(before);
 });
 
+test("shows an API unavailable state with retry", async ({ page }) => {
+  await page.route("**/api/sessions", async (route) => {
+    await route.fulfill({ status: 503, body: "tmux server down" });
+  });
+
+  await page.goto("/");
+
+  await expect(page.getByText("tmux API is unavailable")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+  await expect(page.getByText("offline")).toBeVisible();
+});
+
+test("shows an empty state when tmux has no sessions", async ({ page }) => {
+  await page.route("**/api/sessions", async (route) => {
+    await route.fulfill({ json: { sessions: [], windows: {}, panes: {} } });
+  });
+
+  await page.goto("/");
+
+  await expect(page.getByText("No tmux sessions")).toBeVisible();
+  await expect(page.getByText("Create a new session")).toBeVisible();
+  await expect(page.locator("[data-session-card]")).toHaveCount(0);
+});
+
+test("falls back to pane metadata when session preview capture fails", async ({ page }) => {
+  await page.route("**/api/sessions", async (route) => {
+    await route.fulfill({ json: snapshot });
+  });
+  await page.route("**/api/panes/*/capture?*", async (route) => {
+    await route.fulfill({ status: 500, body: "capture failed" });
+  });
+
+  await page.goto("/");
+
+  const sessionCard = page.locator("[data-session-card]").first();
+  await expect(sessionCard).toContainText("work");
+  await expect(sessionCard.locator(".session-preview")).toContainText("bash");
+  await expect(sessionCard.locator(".session-preview")).toHaveClass(/fallback/u);
+});
+
+test("shows a pane capture failure notice without hiding the terminal", async ({ page }) => {
+  await page.route("**/api/sessions", async (route) => {
+    await route.fulfill({ json: snapshot });
+  });
+  await page.route("**/api/panes/*/capture?*", async (route) => {
+    await route.fulfill({ status: 500, body: "capture failed" });
+  });
+  await page.route("**/api/panes/*/resize", async (route) => {
+    await route.fulfill({ json: { ok: true } });
+  });
+
+  await page.goto("/");
+  await page.locator("[data-session-card]").first().click();
+
+  await expect(page.getByText("Pane capture failed")).toBeVisible();
+  await expect(page.locator("#terminal")).toContainText("Unable to capture pane %1");
+  await expect(page.locator("#terminal")).toContainText("capture failed");
+});
+
 async function openSessionManager(page: Page) {
   await page.goto("/");
   const sessionCard = page.locator("[data-session-card]").first();
