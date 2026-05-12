@@ -66,9 +66,7 @@ test("shows a quiet offline state with retry when the API is unavailable", async
   await page.goto("/");
 
   await expect(page.getByText("tmux API is offline")).toBeVisible();
-  await expect(
-    page.getByText("Start the tmux API or retry when it is available."),
-  ).toBeVisible();
+  await expect(page.getByText("Start the tmux API or retry when it is available.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
   await expect(page.getByText("offline", { exact: true })).toBeVisible();
   await expect(page.getByText("Unable to reach tmux API")).toHaveCount(0);
