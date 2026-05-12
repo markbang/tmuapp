@@ -1,9 +1,18 @@
 package dev.tmuapp.mobile
 
+import android.content.Context
+import android.graphics.Typeface
 import android.os.Bundle
+import android.util.Log
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -20,16 +29,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.LocalTextStyle
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,11 +40,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -57,6 +62,7 @@ import java.nio.charset.StandardCharsets
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.system.exitProcess
 
 private val Canvas = Color(0xFF010102)
 private val Surface1 = Color(0xFF0F1011)
@@ -64,36 +70,86 @@ private val Surface2 = Color(0xFF141516)
 private val Primary = Color(0xFF5E6AD2)
 private val Ink = Color(0xFFF7F8F8)
 private val InkMuted = Color(0xFF8A8F98)
+private val Stroke = Color(0xFF2A2B30)
+private const val CrashPrefs = "tmuapp.crash"
+private const val LastCrash = "lastCrash"
 
 class MainActivity : ComponentActivity() {
+    private val crashPrefs by lazy { getSharedPreferences(CrashPrefs, Context.MODE_PRIVATE) }
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        installCrashRecorder()
         super.onCreate(savedInstanceState)
         window.statusBarColor = android.graphics.Color.rgb(1, 1, 2)
         window.navigationBarColor = android.graphics.Color.rgb(1, 1, 2)
 
-        setContent {
-            TmuappTheme {
-                TmuappClient()
+        val previousCrash = crashPrefs.getString(LastCrash, null)
+        if (previousCrash != null) {
+            showCrashFallback(previousCrash)
+            return
+        }
+
+        try {
+            setContent { TmuappClient() }
+        } catch (throwable: Throwable) {
+            recordCrash(throwable)
+            showCrashFallback(Log.getStackTraceString(throwable))
+        }
+    }
+
+    private fun installCrashRecorder() {
+        val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            recordCrash(throwable)
+            if (previousHandler != null) {
+                previousHandler.uncaughtException(thread, throwable)
+            } else {
+                exitProcess(2)
             }
         }
     }
-}
 
-@Composable
-private fun TmuappTheme(content: @Composable () -> Unit) {
-    MaterialTheme(
-        colorScheme = darkColorScheme(
-            primary = Primary,
-            background = Canvas,
-            surface = Surface1,
-            surfaceVariant = Surface2,
-            onPrimary = Ink,
-            onBackground = Ink,
-            onSurface = Ink,
-            onSurfaceVariant = InkMuted,
-        ),
-        content = content,
-    )
+    private fun recordCrash(throwable: Throwable) {
+        crashPrefs.edit()
+            .putString(LastCrash, Log.getStackTraceString(throwable))
+            .commit()
+    }
+
+    private fun showCrashFallback(crash: String) {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(32, 32, 32, 32)
+            setBackgroundColor(android.graphics.Color.rgb(1, 1, 2))
+        }
+        val title = TextView(this).apply {
+            text = "tmuapp startup recovery"
+            setTextColor(android.graphics.Color.rgb(247, 248, 248))
+            textSize = 20f
+            typeface = Typeface.DEFAULT_BOLD
+        }
+        val body = TextView(this).apply {
+            text = crash
+            setTextColor(android.graphics.Color.rgb(247, 248, 248))
+            textSize = 12f
+            typeface = Typeface.MONOSPACE
+            setPadding(0, 24, 0, 24)
+        }
+        val clear = Button(this).apply {
+            text = "Clear crash and retry"
+            setOnClickListener {
+                crashPrefs.edit().remove(LastCrash).apply()
+                recreate()
+            }
+        }
+        root.addView(title)
+        root.addView(ScrollView(this).apply { addView(body) }, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            0,
+            1f,
+        ))
+        root.addView(clear)
+        setContentView(root)
+    }
 }
 
 @Composable
@@ -143,53 +199,52 @@ private fun TmuappClient() {
         },
     )
 
-    Scaffold(
-        containerColor = Canvas,
-        contentColor = Ink,
-    ) { contentPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Canvas)
-                .padding(contentPadding)
-                .statusBarsPadding()
-                .navigationBarsPadding()
-                .imePadding()
-                .verticalScroll(rememberScrollState())
-                .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            Header()
-            ClientField(
-                label = "API base URL",
-                value = apiBase,
-                onValueChange = { apiBase = it },
-                keyboardType = KeyboardType.Uri,
-            )
-            ClientField("API token", apiToken, { apiToken = it })
-            ClientField("Session name", sessionName, { sessionName = it })
-            ClientField("tmux target", target, { target = it })
-            ClientField("Pane input", paneInput, { paneInput = it })
-            ActionGrid(actions = actions, enabled = !busy)
-            OutputPanel(text = output)
-        }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Canvas)
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .imePadding()
+            .verticalScroll(rememberScrollState())
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Header()
+        ClientField(
+            label = "API base URL",
+            value = apiBase,
+            onValueChange = { apiBase = it },
+            keyboardType = KeyboardType.Uri,
+        )
+        ClientField("API token", apiToken, { apiToken = it })
+        ClientField("Session name", sessionName, { sessionName = it })
+        ClientField("tmux target", target, { target = it })
+        ClientField("Pane input", paneInput, { paneInput = it })
+        ActionGrid(actions = actions, enabled = !busy)
+        OutputPanel(text = output)
     }
 }
 
 @Composable
 private fun Header() {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(
+        BasicText(
             text = "tmuapp",
-            color = Ink,
-            fontSize = 28.sp,
-            lineHeight = 32.sp,
+            style = TextStyle(
+                color = Ink,
+                fontSize = 28.sp,
+                lineHeight = 32.sp,
+                fontWeight = FontWeight.SemiBold,
+            ),
         )
-        Text(
+        BasicText(
             text = "tmux sessions, panes, ANSI capture",
-            color = InkMuted,
-            fontSize = 14.sp,
-            lineHeight = 20.sp,
+            style = TextStyle(
+                color = InkMuted,
+                fontSize = 14.sp,
+                lineHeight = 20.sp,
+            ),
         )
     }
 }
@@ -201,18 +256,29 @@ private fun ClientField(
     onValueChange: (String) -> Unit,
     keyboardType: KeyboardType = KeyboardType.Text,
 ) {
-    OutlinedTextField(
-        value = value,
-        onValueChange = onValueChange,
-        modifier = Modifier.fillMaxWidth(),
-        label = { Text(label) },
-        singleLine = true,
-        textStyle = LocalTextStyle.current.copy(color = Ink),
-        keyboardOptions = KeyboardOptions(
-            capitalization = KeyboardCapitalization.None,
-            keyboardType = keyboardType,
-        ),
-    )
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        BasicText(
+            text = label,
+            style = TextStyle(color = InkMuted, fontSize = 12.sp, lineHeight = 16.sp),
+        )
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(44.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Surface1)
+                .border(1.dp, Stroke, RoundedCornerShape(8.dp))
+                .padding(horizontal = 12.dp, vertical = 12.dp),
+            singleLine = true,
+            textStyle = TextStyle(color = Ink, fontSize = 14.sp, lineHeight = 20.sp),
+            keyboardOptions = KeyboardOptions(
+                capitalization = KeyboardCapitalization.None,
+                keyboardType = keyboardType,
+            ),
+        )
+    }
 }
 
 @Composable
@@ -226,22 +292,12 @@ private fun ActionGrid(actions: List<Action>, enabled: Boolean) {
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     rowActions.forEach { action ->
-                        Button(
-                            onClick = action.onClick,
+                        ActionButton(
+                            label = action.label,
                             enabled = enabled,
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(48.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Primary,
-                                contentColor = Ink,
-                                disabledContainerColor = Surface2,
-                                disabledContentColor = InkMuted,
-                            ),
-                            shape = RoundedCornerShape(8.dp),
-                        ) {
-                            Text(text = action.label, fontSize = 14.sp)
-                        }
+                            onClick = action.onClick,
+                            modifier = Modifier.weight(1f),
+                        )
                     }
                     repeat(columns - rowActions.size) {
                         Spacer(modifier = Modifier.weight(1f))
@@ -253,22 +309,44 @@ private fun ActionGrid(actions: List<Action>, enabled: Boolean) {
 }
 
 @Composable
-private fun OutputPanel(text: String) {
-    val scrollState = rememberScrollState()
+private fun ActionButton(
+    label: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val background = if (enabled) Primary else Surface2
+    val content = if (enabled) Ink else InkMuted
+    Box(
+        modifier = modifier
+            .height(48.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(background)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 12.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        BasicText(
+            text = label,
+            style = TextStyle(color = content, fontSize = 14.sp, lineHeight = 18.sp),
+        )
+    }
+}
 
+@Composable
+private fun OutputPanel(text: String) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 220.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(Surface2)
-            .verticalScroll(scrollState)
             .padding(16.dp),
     ) {
-        Text(
+        BasicText(
             text = text.ifBlank { " " },
-            color = Ink,
             style = TextStyle(
+                color = Ink,
                 fontFamily = FontFamily.Monospace,
                 fontSize = 12.sp,
                 lineHeight = 17.sp,
