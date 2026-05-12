@@ -66,6 +66,8 @@ jobs:
           distribution: temurin
           java-version: 21
       - uses: android-actions/setup-android@v3
+      - name: Install Android SDK platform
+        run: sdkmanager "platforms;android-36"
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.14.3
@@ -100,41 +102,23 @@ jobs:
           asset_dir="apps/android/release-apks"
           mkdir -p "$asset_dir"
 
-          source_apk="$output_dir/app-release-unsigned.apk"
-          if [ ! -f "$source_apk" ]; then
-            source_apk="$output_dir/app-release.apk"
-          fi
-          test -f "$source_apk"
-
-          cp "$source_apk" "$asset_dir/tmuapp-v$version.apk"
-          python3 - "$source_apk" "$asset_dir" "$version" <<'PY'
-          import sys
-          import zipfile
-          from pathlib import Path
-
-          source = Path(sys.argv[1])
-          asset_dir = Path(sys.argv[2])
-          version = sys.argv[3]
-          targets = {
-              "arm64-v8a": f"tmuapp-arm64-v8a-v{version}.apk",
-              "armeabi-v7a": f"tmuapp-armeabi-v7a-v{version}.apk",
-              "x86": f"tmuapp-x86-v{version}.apk",
-              "x86_64": f"tmuapp-x86_64-v{version}.apk",
+          pick_apk() {
+            local name="$1"
+            local unsigned="$output_dir/$name-release-unsigned.apk"
+            local signed="$output_dir/$name-release.apk"
+            if [ -f "$unsigned" ]; then
+              printf "%s" "$unsigned"
+            else
+              test -f "$signed"
+              printf "%s" "$signed"
+            fi
           }
 
-          with zipfile.ZipFile(source, "r") as src:
-              entries = [(info, src.read(info.filename)) for info in src.infolist()]
-
-          for abi, filename in targets.items():
-              with zipfile.ZipFile(asset_dir / filename, "w") as dest:
-                  for info, data in entries:
-                      parts = info.filename.split("/")
-                      if parts[0] == "META-INF":
-                          continue
-                      if parts[0] == "lib" and len(parts) > 2 and parts[1] != abi:
-                          continue
-                      dest.writestr(info, data)
-          PY
+          cp "$(pick_apk app-universal)" "$asset_dir/tmuapp-v$version.apk"
+          cp "$(pick_apk app-arm64-v8a)" "$asset_dir/tmuapp-arm64-v8a-v$version.apk"
+          cp "$(pick_apk app-armeabi-v7a)" "$asset_dir/tmuapp-armeabi-v7a-v$version.apk"
+          cp "$(pick_apk app-x86)" "$asset_dir/tmuapp-x86-v$version.apk"
+          cp "$(pick_apk app-x86_64)" "$asset_dir/tmuapp-x86_64-v$version.apk"
 
           ls -lh "$asset_dir"
       - name: Sign release APK assets

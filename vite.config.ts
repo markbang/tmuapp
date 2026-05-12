@@ -6,6 +6,9 @@ export default defineConfig({
   },
   fmt: {},
   lint: { options: { typeAware: true, typeCheck: true } },
+  test: {
+    exclude: ["**/tests/e2e/**"],
+  },
   run: {
     cache: true,
   },
