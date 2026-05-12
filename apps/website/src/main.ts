@@ -1,6 +1,6 @@
 import "@wterm/dom/css";
 import { WTerm } from "@wterm/dom";
-import { type TmuxPane, type TmuxSnapshot, type TmuxWindow } from "utils";
+import { type TmuxPane, type TmuxSession, type TmuxSnapshot, type TmuxWindow } from "utils";
 import "./style.css";
 
 type CaptureResult = {
@@ -22,6 +22,7 @@ const apiLabel = apiBase || "same-origin / Vite proxy";
 const app = document.querySelector<HTMLDivElement>("#app")!;
 
 const state: {
+  view: "overview" | "manage";
   snapshot?: TmuxSnapshot;
   activeSession?: string;
   activeWindow?: string;
@@ -31,7 +32,13 @@ const state: {
   refreshTimer?: number;
   resizeTimer?: number;
   lastResize?: string;
-} = {};
+  sessionPreviews: Record<string, string>;
+  previewRun: number;
+} = {
+  view: "overview",
+  sessionPreviews: {},
+  previewRun: 0,
+};
 
 app.innerHTML = `
   <header class="topbar">
@@ -49,56 +56,74 @@ app.innerHTML = `
     </nav>
   </header>
   <main class="workspace">
-    <aside class="rail" aria-label="Sessions">
-      <div class="panel-heading">
-        <span>Sessions</span>
-        <small id="session-count">0</small>
-      </div>
-      <div id="sessions" class="session-list"></div>
-    </aside>
-    <section class="main-pane">
-      <div class="window-strip" id="windows" role="tablist" aria-label="Windows"></div>
-      <div class="terminal-shell">
-        <div class="terminal-toolbar">
-          <div>
-            <strong id="active-title">No pane selected</strong>
-            <span id="active-meta"></span>
-          </div>
-          <div class="terminal-actions">
-            <button class="ghost" id="split-h" type="button">Split H</button>
-            <button class="ghost" id="split-v" type="button">Split V</button>
-            <button class="danger" id="kill-window" type="button">Kill window</button>
-          </div>
+    <section id="overview" class="overview" aria-label="Session overview">
+      <div class="overview-head">
+        <div>
+          <h2>Sessions</h2>
+          <p id="overview-meta">0 active panes</p>
         </div>
-        <div id="terminal" class="terminal" aria-label="tmux pane terminal"></div>
-        <form class="input-row" id="input-form">
-          <input id="pane-input" name="input" autocomplete="off" placeholder="Send literal input to selected pane" />
-          <button class="primary" type="submit">Send</button>
-          <button class="ghost" id="enter-key" type="button">Enter</button>
-        </form>
+        <span id="session-count" class="count-pill">0</span>
+      </div>
+      <div id="sessions" class="session-grid"></div>
+    </section>
+    <section id="manager" class="manager hidden" aria-label="Session manager">
+      <div class="manager-header">
+        <button class="ghost" id="back-to-sessions" type="button">Sessions</button>
+        <div>
+          <strong id="manager-session-title">No session selected</strong>
+          <span id="manager-session-meta"></span>
+        </div>
+      </div>
+      <div class="manager-grid">
+        <section class="main-pane">
+          <div class="window-strip" id="windows" role="tablist" aria-label="Windows"></div>
+          <div class="terminal-shell">
+            <div class="terminal-toolbar">
+              <div>
+                <strong id="active-title">No pane selected</strong>
+                <span id="active-meta"></span>
+              </div>
+              <div class="terminal-actions">
+                <button class="ghost" id="split-h" type="button">Split H</button>
+                <button class="ghost" id="split-v" type="button">Split V</button>
+                <button class="danger" id="kill-window" type="button">Kill window</button>
+              </div>
+            </div>
+            <div id="terminal" class="terminal" aria-label="tmux pane terminal"></div>
+            <form class="input-row" id="input-form">
+              <input id="pane-input" name="input" autocomplete="off" placeholder="Send literal input to selected pane" />
+              <button class="primary" type="submit">Send</button>
+              <button class="ghost" id="enter-key" type="button">Enter</button>
+            </form>
+          </div>
+        </section>
+        <aside class="inspector" aria-label="Panes">
+          <div class="panel-heading">
+            <span>Panes</span>
+            <small id="pane-count">0</small>
+          </div>
+          <div id="panes" class="pane-list"></div>
+          <section class="metrics">
+            <h2>Renderer</h2>
+            <dl>
+              <div><dt>Mode</dt><dd>wterm ANSI</dd></div>
+              <div><dt>Fit</dt><dd id="fit-size">pending</dd></div>
+              <div><dt>API</dt><dd>${apiLabel}</dd></div>
+            </dl>
+          </section>
+        </aside>
       </div>
     </section>
-    <aside class="inspector" aria-label="Panes">
-      <div class="panel-heading">
-        <span>Panes</span>
-        <small id="pane-count">0</small>
-      </div>
-      <div id="panes" class="pane-list"></div>
-      <section class="metrics">
-        <h2>Renderer</h2>
-        <dl>
-          <div><dt>Mode</dt><dd>wterm ANSI</dd></div>
-          <div><dt>Fit</dt><dd id="fit-size">pending</dd></div>
-          <div><dt>API</dt><dd>${apiLabel}</dd></div>
-        </dl>
-      </section>
-    </aside>
   </main>
 `;
 
 wireEvents();
 await refresh();
-state.refreshTimer = window.setInterval(refreshActivePane, 2_000);
+state.refreshTimer = window.setInterval(() => {
+  if (state.view === "manage") {
+    void refreshActivePane();
+  }
+}, 2_000);
 
 function wireEvents() {
   document
@@ -110,6 +135,9 @@ function wireEvents() {
   document
     .querySelector<HTMLButtonElement>("#api-token")!
     .addEventListener("click", configureApiToken);
+  document
+    .querySelector<HTMLButtonElement>("#back-to-sessions")!
+    .addEventListener("click", showOverview);
   document
     .querySelector<HTMLButtonElement>("#kill-window")!
     .addEventListener("click", () => void killActiveWindow());
@@ -134,30 +162,49 @@ function wireEvents() {
 async function refresh() {
   try {
     state.snapshot = await request<TmuxSnapshot>("/api/sessions");
-    const firstSession = state.snapshot.sessions[0]?.id;
-    state.activeSession =
-      chooseExisting(
-        state.activeSession,
-        state.snapshot.sessions.map((session) => session.id),
-      ) ?? firstSession;
-    state.activeWindow =
-      chooseExisting(
-        state.activeWindow,
-        currentWindows().map((window) => window.id),
-      ) ?? currentWindows()[0]?.id;
-    state.activePane =
-      chooseExisting(
-        state.activePane,
-        currentPanes().map((pane) => pane.id),
-      ) ?? currentPanes()[0]?.id;
+    reconcileSelection();
     renderNavigation();
-    await refreshActivePane();
+
+    if (state.view === "manage") {
+      await refreshActivePane();
+    } else {
+      void refreshSessionPreviews();
+    }
   } catch (error) {
-    renderTerminalText(`Unable to reach API at ${apiLabel}\n${message(error)}`);
+    if (state.view === "manage") {
+      renderTerminalText(`Unable to reach API at ${apiLabel}\n${message(error)}`);
+    } else {
+      renderOverviewError(`Unable to reach API at ${apiLabel}\n${message(error)}`);
+    }
+  }
+}
+
+function reconcileSelection() {
+  const sessions = state.snapshot?.sessions ?? [];
+  const sessionIds = sessions.map((session) => session.id);
+
+  state.activeSession = chooseExisting(state.activeSession, sessionIds) ?? sessions[0]?.id;
+  state.activeWindow =
+    chooseExisting(
+      state.activeWindow,
+      currentWindows().map((window) => window.id),
+    ) ?? activeOrFirstWindow(state.activeSession)?.id;
+  state.activePane =
+    chooseExisting(
+      state.activePane,
+      currentPanes().map((pane) => pane.id),
+    ) ?? activeOrFirstPane(state.activeWindow)?.id;
+
+  if (state.view === "manage" && !state.activeSession) {
+    state.view = "overview";
   }
 }
 
 async function refreshActivePane() {
+  if (state.view !== "manage") {
+    return;
+  }
+
   if (!state.activePane) {
     renderTerminalText("No tmux pane selected. Create or attach to a session to begin.");
     return;
@@ -169,31 +216,101 @@ async function refreshActivePane() {
   await renderTerminal(capture);
 }
 
+async function refreshSessionPreviews() {
+  const run = ++state.previewRun;
+  const sessions = state.snapshot?.sessions ?? [];
+
+  await Promise.all(
+    sessions.map(async (session) => {
+      const pane = firstPaneForSession(session.id);
+      if (!pane) {
+        state.sessionPreviews[session.id] = "No panes";
+        return;
+      }
+
+      try {
+        const capture = await request<CaptureResult>(
+          `/api/panes/${encodeURIComponent(pane.id)}/capture?lines=8`,
+        );
+        if (run === state.previewRun) {
+          state.sessionPreviews[session.id] = previewText(capture.ansi);
+        }
+      } catch {
+        if (run === state.previewRun) {
+          state.sessionPreviews[session.id] = pane.currentCommand || pane.currentPath || pane.id;
+        }
+      }
+    }),
+  );
+
+  if (run === state.previewRun && state.view === "overview") {
+    renderNavigation();
+  }
+}
+
 function renderNavigation() {
   const sessions = state.snapshot?.sessions ?? [];
+  const totalPanes = sessions.reduce(
+    (count, session) => count + panesForSession(session.id).length,
+    0,
+  );
   document.querySelector("#session-count")!.textContent = String(sessions.length);
+  document.querySelector("#overview-meta")!.textContent = `${totalPanes} active panes`;
   document.querySelector("#pane-count")!.textContent = String(currentPanes().length);
 
-  document.querySelector("#sessions")!.innerHTML = sessions
-    .map(
-      (session) => `
-        <button class="session-item ${session.id === state.activeSession ? "selected" : ""}" data-session="${escapeHtml(session.id)}" type="button">
-          <span>${escapeHtml(session.name)}</span>
-          <small>${session.windows} windows ${session.attached ? "attached" : "detached"}</small>
+  document.querySelector("#overview")!.classList.toggle("hidden", state.view !== "overview");
+  document.querySelector("#manager")!.classList.toggle("hidden", state.view !== "manage");
+
+  renderSessionCards(sessions);
+  renderManager();
+}
+
+function renderSessionCards(sessions: TmuxSession[]) {
+  const container = document.querySelector("#sessions")!;
+  if (sessions.length === 0) {
+    container.innerHTML = `<div class="empty-state">No tmux sessions</div>`;
+    return;
+  }
+
+  container.innerHTML = sessions
+    .map((session) => {
+      const windows = state.snapshot?.windows[session.id] ?? [];
+      const panes = panesForSession(session.id);
+      const primaryPane = firstPaneForSession(session.id);
+      const preview = state.sessionPreviews[session.id] ?? "Loading preview...";
+      const command = primaryPane?.currentCommand || primaryPane?.title || "idle";
+      const path = primaryPane?.currentPath || "";
+
+      return `
+        <button class="session-card ${session.id === state.activeSession ? "selected" : ""}" data-session-card="${escapeHtml(session.id)}" type="button">
+          <span class="session-card-top">
+            <strong>${escapeHtml(session.name)}</strong>
+            <span class="status ${session.attached ? "attached" : "detached"}">${session.attached ? "attached" : "detached"}</span>
+          </span>
+          <span class="session-stats">
+            <span>${windows.length} windows</span>
+            <span>${panes.length} panes</span>
+            <span>${escapeHtml(command)}</span>
+          </span>
+          <span class="session-path">${escapeHtml(path)}</span>
+          <pre class="session-preview">${escapeHtml(preview)}</pre>
         </button>
-      `,
-    )
+      `;
+    })
     .join("");
 
-  document.querySelectorAll<HTMLButtonElement>("[data-session]").forEach((button) => {
-    button.addEventListener("click", () => {
-      state.activeSession = button.dataset.session;
-      state.activeWindow = currentWindows()[0]?.id;
-      state.activePane = currentPanes()[0]?.id;
-      renderNavigation();
-      void refreshActivePane();
-    });
+  document.querySelectorAll<HTMLButtonElement>("[data-session-card]").forEach((button) => {
+    button.addEventListener("click", () => openSession(button.dataset.sessionCard));
   });
+}
+
+function renderManager() {
+  const activeSession = currentSession();
+  document.querySelector("#manager-session-title")!.textContent =
+    activeSession?.name ?? "No session selected";
+  document.querySelector("#manager-session-meta")!.textContent = activeSession
+    ? `${activeSession.windows} windows ${activeSession.attached ? "attached" : "detached"}`
+    : "";
 
   document.querySelector("#windows")!.innerHTML = currentWindows()
     .map(
@@ -209,7 +326,7 @@ function renderNavigation() {
   document.querySelectorAll<HTMLButtonElement>("[data-window]").forEach((button) => {
     button.addEventListener("click", () => {
       state.activeWindow = button.dataset.window;
-      state.activePane = currentPanes()[0]?.id;
+      state.activePane = activeOrFirstPane(state.activeWindow)?.id;
       renderNavigation();
       void refreshActivePane();
     });
@@ -242,6 +359,25 @@ function renderNavigation() {
     : "";
 }
 
+function openSession(sessionId: string | undefined) {
+  if (!sessionId) {
+    return;
+  }
+
+  state.view = "manage";
+  state.activeSession = sessionId;
+  state.activeWindow = activeOrFirstWindow(sessionId)?.id;
+  state.activePane = activeOrFirstPane(state.activeWindow)?.id;
+  renderNavigation();
+  void refreshActivePane();
+}
+
+function showOverview() {
+  state.view = "overview";
+  renderNavigation();
+  void refreshSessionPreviews();
+}
+
 async function renderTerminal(capture: CaptureResult) {
   if (!state.terminal) {
     const element = document.querySelector<HTMLDivElement>("#terminal")!;
@@ -261,6 +397,7 @@ async function renderTerminal(capture: CaptureResult) {
   state.terminal.write(capture.ansi.replaceAll("\n", "\r\n"));
   state.terminal.write(cursorPosition(capture));
   updateFitLabel();
+  scheduleResizeActivePane(state.terminal.cols, state.terminal.rows);
 }
 
 function renderTerminalText(text: string) {
@@ -272,15 +409,20 @@ function renderTerminalText(text: string) {
   });
 }
 
+function renderOverviewError(text: string) {
+  document.querySelector("#sessions")!.innerHTML =
+    `<div class="empty-state error">${escapeHtml(text)}</div>`;
+}
+
 function fitTerminal() {
-  if (state.terminal && state.activePane) {
+  if (state.terminal && state.activePane && state.view === "manage") {
     updateFitLabel();
     scheduleResizeActivePane(state.terminal.cols, state.terminal.rows);
   }
 }
 
 function scheduleResizeActivePane(columns: number, rows: number) {
-  if (!state.activePane) {
+  if (!state.activePane || state.view !== "manage") {
     return;
   }
 
@@ -375,7 +517,7 @@ async function sendKeys(keys: string[]) {
 }
 
 async function resizeActivePane(columns: number, rows: number) {
-  if (!state.activePane) {
+  if (!state.activePane || state.view !== "manage") {
     return;
   }
 
@@ -414,6 +556,10 @@ function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
 
+function currentSession(): TmuxSession | undefined {
+  return state.snapshot?.sessions.find((session) => session.id === state.activeSession);
+}
+
 function currentWindows(): TmuxWindow[] {
   return state.activeSession && state.snapshot
     ? (state.snapshot.windows[state.activeSession] ?? [])
@@ -426,8 +572,49 @@ function currentPanes(): TmuxPane[] {
     : [];
 }
 
+function panesForSession(sessionId: string): TmuxPane[] {
+  const windows = state.snapshot?.windows[sessionId] ?? [];
+  return windows.flatMap((window) => state.snapshot?.panes[window.id] ?? []);
+}
+
+function activeOrFirstWindow(sessionId: string | undefined): TmuxWindow | undefined {
+  const windows = sessionId && state.snapshot ? (state.snapshot.windows[sessionId] ?? []) : [];
+  return windows.find((window) => window.active) ?? windows[0];
+}
+
+function activeOrFirstPane(windowId: string | undefined): TmuxPane | undefined {
+  const panes = windowId && state.snapshot ? (state.snapshot.panes[windowId] ?? []) : [];
+  return panes.find((pane) => pane.active) ?? panes[0];
+}
+
+function firstPaneForSession(sessionId: string): TmuxPane | undefined {
+  const window = activeOrFirstWindow(sessionId);
+  return activeOrFirstPane(window?.id);
+}
+
 function chooseExisting(current: string | undefined, candidates: string[]) {
   return current && candidates.includes(current) ? current : undefined;
+}
+
+function previewText(ansi: string) {
+  const text = stripAnsi(ansi)
+    .replaceAll("\r", "")
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter(Boolean)
+    .slice(-5)
+    .join("\n");
+
+  return text || "No output";
+}
+
+const ansiPattern = new RegExp(
+  String.raw`[\x1b\x9b][[\]\()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[a-zA-Z\d]*)*)?\x07)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))`,
+  "g",
+);
+
+function stripAnsi(value: string) {
+  return value.replace(ansiPattern, "");
 }
 
 async function request<T>(

@@ -27,7 +27,7 @@ test("wterm renders tmux capture and sends terminal keyboard input", async ({ pa
   const resizePayloads: Array<{ width: number; height: number }> = [];
 
   await mockTmuxApi(page, { inputPayloads, keyPayloads, resizePayloads });
-  await page.goto("/");
+  await openSessionManager(page);
 
   await expect(page.getByText("wterm ANSI")).toBeVisible();
   await expect(page.locator("#terminal")).toContainText("ready");
@@ -49,7 +49,7 @@ test("wterm resize updates the tmux pane dimensions", async ({ page }) => {
 
   await page.setViewportSize({ width: 1280, height: 820 });
   await mockTmuxApi(page, { inputPayloads: [], keyPayloads: [], resizePayloads });
-  await page.goto("/");
+  await openSessionManager(page);
   await expect(page.locator("#terminal")).toContainText("ready");
   await expect.poll(() => resizePayloads.length).toBeGreaterThan(0);
 
@@ -57,6 +57,15 @@ test("wterm resize updates the tmux pane dimensions", async ({ page }) => {
   await page.setViewportSize({ width: 980, height: 720 });
   await expect.poll(() => resizePayloads.at(-1)).not.toEqual(before);
 });
+
+async function openSessionManager(page: Page) {
+  await page.goto("/");
+  const sessionCard = page.locator("[data-session-card]").first();
+  await expect(sessionCard).toContainText("work");
+  await expect(sessionCard).toContainText("from mocked tmux");
+  await sessionCard.click();
+  await expect(page.getByText("shell").first()).toBeVisible();
+}
 
 async function mockTmuxApi(
   page: Page,
