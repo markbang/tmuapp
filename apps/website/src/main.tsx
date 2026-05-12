@@ -203,12 +203,12 @@ function App() {
         }
       } catch (error) {
         setStatus("error");
-        setNotice({
-          tone: "danger",
-          title: "Unable to reach tmux API",
-          body: `${apiLabel}: ${message(error)}`,
-        });
         if (view === "manage") {
+          setNotice({
+            tone: "danger",
+            title: "Unable to reach tmux API",
+            body: `${apiLabel}: ${message(error)}`,
+          });
           renderTerminalText(`Unable to reach API at ${apiLabel}\n${message(error)}`);
         }
       } finally {
@@ -698,9 +698,9 @@ function SessionGrid(props: {
   if (props.status === "error") {
     return (
       <EmptyState
-        tone="danger"
-        title="tmux API is unavailable"
-        body={`Check the API target, token, or server health. Current API: ${apiLabel}.`}
+        tone="neutral"
+        title="tmux API is offline"
+        body="Start the tmux API or retry when it is available."
         actionLabel="Retry"
         onAction={props.onRetry}
       />

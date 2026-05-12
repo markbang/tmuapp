@@ -58,16 +58,19 @@ test("wterm resize updates the tmux pane dimensions", async ({ page }) => {
   await expect.poll(() => resizePayloads.at(-1)).not.toEqual(before);
 });
 
-test("shows an API unavailable state with retry", async ({ page }) => {
+test("shows a quiet offline state with retry when the API is unavailable", async ({ page }) => {
   await page.route("**/api/sessions", async (route) => {
     await route.fulfill({ status: 503, body: "tmux server down" });
   });
 
   await page.goto("/");
 
-  await expect(page.getByText("tmux API is unavailable")).toBeVisible();
+  await expect(page.getByText("tmux API is offline")).toBeVisible();
+  await expect(page.getByText("Start the tmux API or retry when it is available.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
-  await expect(page.getByText("offline")).toBeVisible();
+  await expect(page.getByText("offline", { exact: true })).toBeVisible();
+  await expect(page.getByText("Unable to reach tmux API")).toHaveCount(0);
+  await expect(page.locator(".empty-state.danger")).toHaveCount(0);
 });
 
 test("shows an empty state when tmux has no sessions", async ({ page }) => {
