@@ -1,5 +1,4 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { sanitizeTarget } from "utils";
 import { runTmux, type TmuxRunner } from "./tmux.js";
 
 export type TmuxStream = {
@@ -17,14 +16,13 @@ export function createTmuxStream(
   },
   options: { runCommand?: TmuxRunner; runStream?: TmuxStreamRunner } = {},
 ): TmuxStream {
-  const safeTarget = sanitizeTarget(target);
   const runCommand = options.runCommand ?? runTmux;
   const runStream = options.runStream ?? spawnTmuxStream;
-  const control = runStream(["-C", "attach-session", "-t", safeTarget]);
+  const control = runStream(["-C", "attach-session", "-t", target]);
   let stdoutBuffer = "";
   let closed = false;
 
-  void sendInitialCapture(safeTarget, runCommand, callbacks.onData, callbacks.onError);
+  void sendInitialCapture(target, runCommand, callbacks.onData, callbacks.onError);
 
   control.stdout.setEncoding("utf8");
   control.stdout.on("data", (chunk: string) => {

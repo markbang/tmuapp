@@ -74,7 +74,6 @@ function App() {
   const streamedPane = useRef<string | undefined>(undefined);
   const resizeTimer = useRef<number | undefined>(undefined);
   const lastResize = useRef<string | undefined>(undefined);
-  const terminalUserScrolled = useRef(false);
 
   const sessions = snapshot?.sessions ?? [];
   const selectedSession = currentSession(snapshot, selection.session);
@@ -557,27 +556,6 @@ function App() {
       void connectTerminalStream(selection.pane);
     }
   }, [connectTerminalStream, selection.pane, view]);
-
-  useEffect(() => {
-    const element = terminalElement.current;
-    if (!element) {
-      return;
-    }
-
-    const updateScrollState = () => {
-      terminalUserScrolled.current = !isTerminalScrolledToBottom(element);
-    };
-
-    element.addEventListener("scroll", updateScrollState, { passive: true });
-    element.addEventListener("wheel", updateScrollState, { passive: true });
-    element.addEventListener("touchmove", updateScrollState, { passive: true });
-
-    return () => {
-      element.removeEventListener("scroll", updateScrollState);
-      element.removeEventListener("wheel", updateScrollState);
-      element.removeEventListener("touchmove", updateScrollState);
-    };
-  }, []);
 
   useEffect(() => {
     const fitTerminal = () => {
@@ -1386,10 +1364,6 @@ function measureTerminalFit(element: HTMLElement) {
     columns: clamp(Math.floor(contentWidth / cellWidth), 20, 500),
     rows: clamp(Math.floor(contentHeight / rowHeight), 5, 200),
   };
-}
-
-function isTerminalScrolledToBottom(element: HTMLElement) {
-  return element.scrollHeight - element.scrollTop - element.clientHeight <= 5;
 }
 
 function clamp(value: number, min: number, max: number) {
