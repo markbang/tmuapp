@@ -21,6 +21,9 @@ catalogs:
     '@types/react-dom':
       specifier: ^19.2.3
       version: 19.2.3
+    '@types/ws':
+      specifier: ^8.18.1
+      version: 8.18.1
     '@vitejs/plugin-react':
       specifier: ^6.0.1
       version: 6.0.1
@@ -39,6 +42,9 @@ catalogs:
     vite-plus:
       specifier: latest
       version: 0.1.20
+    ws:
+      specifier: ^8.20.0
+      version: 8.20.0
 
 overrides:
   vite: npm:@voidzero-dev/vite-plus-core@latest
@@ -54,9 +60,15 @@ importers:
 
   apps/api:
     dependencies:
+      '@types/ws':
+        specifier: 'catalog:'
+        version: 8.18.1
       utils:
         specifier: workspace:*
         version: link:../../packages/utils
+      ws:
+        specifier: 'catalog:'
+        version: 8.20.0
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -786,6 +798,9 @@ packages:
 
   '@types/react@19.2.14':
     resolution: {integrity: sha512-ilcTH/UniCkMdtexkoCN0bI7pMcJDvmQFPvuPvmEaYA/NSfFTAgdUSLAoVjaRJm7+6PvcM+q1zYOwS4wTYMF9w==}
+
+  '@types/ws@8.18.1':
+    resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
 
   '@typescript/native-preview-darwin-arm64@7.0.0-dev.20260509.2':
     resolution: {integrity: sha512-oG9KahiCpx4q70Ood/rRJhYio4oIMHEHfX0g0LhfenlSIjIonitZWjUmUVG9N9q1ev9QWcM8pWpDrGGP0Osp3Q==}
@@ -1935,6 +1950,10 @@ snapshots:
   '@types/react@19.2.14':
     dependencies:
       csstype: 3.2.3
+
+  '@types/ws@8.18.1':
+    dependencies:
+      '@types/node': 25.6.2
 
   '@typescript/native-preview-darwin-arm64@7.0.0-dev.20260509.2':
     optional: true

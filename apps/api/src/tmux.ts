@@ -30,9 +30,7 @@ export type CaptureResult = {
 export function createTmuxService(run: TmuxRunner = runTmux) {
   return {
     async snapshot(): Promise<TmuxSnapshot> {
-      const sessions = parseSessions(
-        await stdout(run, ["list-sessions", "-F", tmuxFormats.sessions]),
-      );
+      const sessions = await listSessions(run);
       const windows: TmuxSnapshot["windows"] = {};
       const panes: TmuxSnapshot["panes"] = {};
 
@@ -181,6 +179,22 @@ export async function runTmux(args: string[]): Promise<TmuxCommandResult> {
 
 async function stdout(run: TmuxRunner, args: string[]) {
   return (await run(args)).stdout;
+}
+
+async function listSessions(run: TmuxRunner) {
+  try {
+    return parseSessions(await stdout(run, ["list-sessions", "-F", tmuxFormats.sessions]));
+  } catch (error) {
+    if (isNoTmuxServer(error)) {
+      return [];
+    }
+
+    throw error;
+  }
+}
+
+function isNoTmuxServer(error: unknown) {
+  return error instanceof Error && /no server running/u.test(error.message);
 }
 
 function validateName(name: string) {

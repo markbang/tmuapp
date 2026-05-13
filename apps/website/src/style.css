@@ -71,14 +71,27 @@ pre {
   display: none !important;
 }
 
+html,
+body,
+#app,
+.app-shell {
+  height: 100%;
+}
+
+body {
+  overflow: hidden;
+}
+
 #app,
 .app-shell {
   min-height: 100svh;
 }
 
 .app-shell {
+  height: 100svh;
   display: grid;
   grid-template-rows: 64px minmax(0, 1fr);
+  overflow: hidden;
   background: var(--canvas);
 }
 
@@ -145,11 +158,14 @@ h1 {
 .workspace {
   min-height: 0;
   position: relative;
+  overflow: hidden;
   background: var(--canvas);
 }
 
 .overview {
   min-height: 0;
+  height: 100%;
+  overflow: auto;
   padding: 22px;
 }
 
@@ -176,6 +192,49 @@ h1 {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: 12px;
+}
+
+.session-composer {
+  max-width: 1360px;
+  margin: 0 auto 12px;
+  display: grid;
+  grid-template-columns: minmax(190px, 0.65fr) minmax(180px, 0.9fr) minmax(220px, 1.15fr) auto;
+  align-items: end;
+  gap: 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface-1);
+}
+
+.composer-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  padding-bottom: 4px;
+}
+
+.composer-copy strong {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.composer-copy span {
+  color: var(--ink-subtle);
+  font-size: 12px;
+}
+
+.composer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.composer-name,
+.composer-cwd {
+  min-width: 0;
 }
 
 .session-card {
@@ -345,6 +404,7 @@ h1 {
 .manager {
   min-height: 0;
   height: 100%;
+  overflow: hidden;
   display: grid;
   grid-template-rows: 54px minmax(0, 1fr);
 }
@@ -366,6 +426,7 @@ h1 {
 
 .manager-grid {
   min-height: 0;
+  overflow: hidden;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(240px, 320px);
 }
@@ -380,6 +441,7 @@ h1 {
 .main-pane {
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
   display: grid;
   grid-template-rows: 50px minmax(0, 1fr);
   background: var(--canvas);
@@ -448,6 +510,7 @@ h1 {
 .terminal-shell {
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
   display: grid;
   grid-template-rows: 52px minmax(0, 1fr) 54px;
 }
@@ -472,6 +535,7 @@ h1 {
   position: relative;
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
   background: #010102;
 }
 
@@ -487,9 +551,13 @@ h1 {
   min-width: 0;
   min-height: 0;
   height: 100%;
-  padding: 10px;
+  padding: 0;
   overflow: hidden;
   background: #010102;
+}
+
+.terminal.wterm.has-scrollback {
+  overflow-y: auto;
 }
 
 .wterm {
@@ -497,13 +565,34 @@ h1 {
   height: 100%;
   min-height: 0;
   border-radius: 0;
+  padding: 10px;
   box-shadow: none;
+  color: var(--term-fg);
+  font-kerning: none;
+  font-variant-ligatures: none;
+  letter-spacing: 0;
+  text-rendering: geometricPrecision;
+  tab-size: 8;
   --term-bg: #010102;
   --term-fg: #f7f8f8;
   --term-cursor: #5e6ad2;
-  --term-font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  --term-font-size: 13px;
-  --term-line-height: 1.15;
+  --term-font-family:
+    ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "DejaVu Sans Mono",
+    monospace;
+  --term-font-size: 14px;
+  --term-line-height: 1.2;
+}
+
+.wterm.focused {
+  outline: 1px solid rgba(94, 106, 210, 0.45);
+  outline-offset: -1px;
+}
+
+.term-grid,
+.term-row,
+.term-row > span {
+  font-variant-ligatures: none;
+  letter-spacing: 0;
 }
 
 .input-row {
@@ -673,6 +762,15 @@ input::placeholder {
     padding: 14px;
   }
 
+  .session-composer {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .composer-copy,
+  .composer-actions {
+    grid-column: 1 / -1;
+  }
+
   .manager-grid {
     grid-template-columns: 1fr;
     grid-template-rows: minmax(60svh, 1fr) auto;
@@ -703,6 +801,18 @@ input::placeholder {
 
   .session-grid {
     grid-template-columns: 1fr;
+  }
+
+  .session-composer {
+    grid-template-columns: 1fr;
+  }
+
+  .composer-actions {
+    justify-content: stretch;
+  }
+
+  .composer-actions button {
+    width: 100%;
   }
 
   .terminal-shell {

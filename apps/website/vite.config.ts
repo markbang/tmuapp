@@ -8,7 +8,7 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     proxy: {
-      "/api": apiTarget,
+      "/api": { target: apiTarget, ws: true },
       "/health": apiTarget,
     },
   },

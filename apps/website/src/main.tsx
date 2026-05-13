@@ -39,6 +39,12 @@ type PreviewState = {
   status: "loading" | "ready" | "fallback" | "empty";
 };
 
+type TerminalStreamMessage = { type: "output"; data: string } | { type: "error"; message: string };
+
+type TerminalStreamCommand =
+  | { type: "input"; data: string }
+  | { type: "resize"; columns: number; rows: number };
+
 const apiBase = import.meta.env.VITE_API_BASE ?? "";
 const configuredToken = import.meta.env.VITE_TMUAPP_TOKEN as string | undefined;
 const apiTokenStorageKey = "tmuapp.apiToken";
@@ -53,6 +59,9 @@ function App() {
   const [notice, setNotice] = useState<Notice>();
   const [operation, setOperation] = useState<Operation>();
   const [inputValue, setInputValue] = useState("");
+  const [newSessionName, setNewSessionName] = useState(defaultSessionName);
+  const [newSessionCwd, setNewSessionCwd] = useState("");
+  const [showCreateSession, setShowCreateSession] = useState(false);
   const [previewRun, setPreviewRun] = useState(0);
   const [sessionPreviews, setSessionPreviews] = useState<Record<string, PreviewState>>({});
   const [fitSize, setFitSize] = useState("pending");
@@ -61,8 +70,11 @@ function App() {
   const terminal = useRef<WTerm | undefined>(undefined);
   const terminalReady = useRef<Promise<WTerm> | undefined>(undefined);
   const terminalDataHandler = useRef<(data: string) => void>(() => {});
+  const terminalStream = useRef<WebSocket | undefined>(undefined);
+  const streamedPane = useRef<string | undefined>(undefined);
   const resizeTimer = useRef<number | undefined>(undefined);
   const lastResize = useRef<string | undefined>(undefined);
+  const terminalUserScrolled = useRef(false);
 
   const sessions = snapshot?.sessions ?? [];
   const selectedSession = currentSession(snapshot, selection.session);
@@ -110,26 +122,29 @@ function App() {
       resizeTimer.current = window.setTimeout(() => {
         resizeTimer.current = undefined;
         if (paneId) {
-          void resizeActivePane(paneId, columns, rows, setOperation, setFitSize);
+          sendTerminalResize(terminalStream.current, columns, rows);
+          if (!isTerminalStreamOpen(terminalStream.current)) {
+            void resizeActivePane(paneId, columns, rows, setOperation, setFitSize);
+          }
         }
       }, 150);
     },
     [selection.pane, view],
   );
 
-  const renderTerminal = useCallback(
-    async (capture: CaptureResult) => {
+  const ensureTerminal = useCallback(
+    async (columns = 120, rows = 34) => {
       if (!terminal.current) {
         const element = terminalElement.current;
         if (!element) {
-          return;
+          return undefined;
         }
 
         terminal.current = new WTerm(element, {
           autoResize: true,
-          cols: capture.terminal.columns || 120,
+          cols: columns || 120,
           cursorBlink: true,
-          rows: capture.terminal.rows || 34,
+          rows: rows || 34,
           onData: (data) => terminalDataHandler.current(data),
           onResize: scheduleResizeActivePane,
         });
@@ -137,13 +152,26 @@ function App() {
       }
 
       await terminalReady.current;
-      terminal.current.write("\x1b[2J\x1b[H");
-      terminal.current.write(capture.ansi.replaceAll("\n", "\r\n"));
-      terminal.current.write(cursorPosition(capture));
+      await waitForLayout();
+      fitTerminalToContainer(terminal.current);
       setFitSize(`${terminal.current.cols}x${terminal.current.rows}`);
       scheduleResizeActivePane(terminal.current.cols, terminal.current.rows);
+      return terminal.current;
     },
     [scheduleResizeActivePane],
+  );
+
+  const renderTerminal = useCallback(
+    async (capture: CaptureResult) => {
+      const term = await ensureTerminal(capture.terminal.columns, capture.terminal.rows);
+      if (!term) {
+        return;
+      }
+
+      resetTerminalSnapshot(term);
+      term.write(capture.ansi.replaceAll("\n", "\r\n"));
+    },
+    [ensureTerminal],
   );
 
   const renderTerminalText = useCallback(
@@ -185,6 +213,106 @@ function App() {
     [renderTerminal, renderTerminalText, selection.pane, view],
   );
 
+  const connectTerminalStream = useCallback(
+    async (paneId = selection.pane) => {
+      if (view !== "manage") {
+        return;
+      }
+
+      terminalStream.current?.close();
+      terminalStream.current = undefined;
+      streamedPane.current = undefined;
+
+      if (!paneId) {
+        renderTerminalText("No tmux pane selected. Create or attach to a session to begin.");
+        return;
+      }
+
+      const term = await ensureTerminal(selectedPane?.width, selectedPane?.height);
+      if (!term) {
+        return;
+      }
+
+      resetTerminalSnapshot(term);
+      setTerminalStatus("loading");
+
+      const socket = new WebSocket(streamUrl(`/api/panes/${encodeURIComponent(paneId)}/stream`));
+      let receivedOutput = false;
+      const fallbackTimer = window.setTimeout(() => {
+        if (!receivedOutput && terminalStream.current === socket) {
+          socket.close();
+          terminalStream.current = undefined;
+          streamedPane.current = undefined;
+          void refreshActivePane(paneId);
+        }
+      }, 800);
+      terminalStream.current = socket;
+      streamedPane.current = paneId;
+
+      socket.addEventListener("open", () => {
+        setTerminalStatus("idle");
+        sendTerminalResize(socket, term.cols, term.rows);
+      });
+
+      socket.addEventListener("message", (event) => {
+        const payload = parseTerminalStreamMessage(event.data);
+        if (!payload) {
+          return;
+        }
+
+        if (payload.type === "output") {
+          receivedOutput = true;
+          window.clearTimeout(fallbackTimer);
+          setTerminalStatus("idle");
+          term.write(payload.data);
+          return;
+        }
+
+        if (!receivedOutput) {
+          window.clearTimeout(fallbackTimer);
+          socket.close();
+          if (terminalStream.current === socket) {
+            terminalStream.current = undefined;
+            streamedPane.current = undefined;
+          }
+          void refreshActivePane(paneId);
+          return;
+        }
+
+        setTerminalStatus("error");
+        setNotice({ tone: "danger", title: "Terminal stream failed", body: payload.message });
+      });
+
+      socket.addEventListener("error", () => {
+        window.clearTimeout(fallbackTimer);
+        if (!receivedOutput) {
+          terminalStream.current = undefined;
+          streamedPane.current = undefined;
+          void refreshActivePane(paneId);
+          return;
+        }
+        setTerminalStatus("error");
+        setNotice({ tone: "danger", title: "Terminal stream failed", body: apiLabel });
+      });
+
+      socket.addEventListener("close", () => {
+        window.clearTimeout(fallbackTimer);
+        if (terminalStream.current === socket) {
+          terminalStream.current = undefined;
+        }
+      });
+    },
+    [
+      ensureTerminal,
+      refreshActivePane,
+      renderTerminalText,
+      selectedPane?.height,
+      selectedPane?.width,
+      selection.pane,
+      view,
+    ],
+  );
+
   const refresh = useCallback(
     async (mode: "initial" | "manual" | "background" = "manual") => {
       setStatus(mode === "initial" ? "loading" : "refreshing");
@@ -197,7 +325,7 @@ function App() {
           setNotice({ tone: "success", title: "Sessions refreshed" });
         }
         if (view === "manage") {
-          await refreshActivePane(nextSelection.pane);
+          await connectTerminalStream(nextSelection.pane);
         } else {
           setPreviewRun((run) => run + 1);
         }
@@ -215,7 +343,7 @@ function App() {
         setOperation(undefined);
       }
     },
-    [applySnapshot, refreshActivePane, renderTerminalText, view],
+    [applySnapshot, connectTerminalStream, renderTerminalText, view],
   );
 
   const sendKeys = useCallback(
@@ -231,7 +359,9 @@ function App() {
           method: "POST",
           body: { keys },
         });
-        await refreshActivePane(selection.pane);
+        if (!isTerminalStreamOpen(terminalStream.current)) {
+          await refreshActivePane(selection.pane);
+        }
       } catch (error) {
         setNotice({ tone: "danger", title: "Unable to send key", body: message(error) });
       } finally {
@@ -253,7 +383,9 @@ function App() {
           method: "POST",
           body: { data },
         });
-        await refreshActivePane(selection.pane);
+        if (!isTerminalStreamOpen(terminalStream.current)) {
+          await refreshActivePane(selection.pane);
+        }
       } catch (error) {
         setNotice({ tone: "danger", title: "Unable to send input", body: message(error) });
       } finally {
@@ -269,22 +401,18 @@ function App() {
         return;
       }
 
-      const chunks = data.split(/(\r)/u).filter(Boolean);
+      const stream = terminalStream.current;
+      if (isTerminalStreamOpen(stream)) {
+        sendTerminalCommand(stream, { type: "input", data });
+        return;
+      }
+
       setOperation("input");
       try {
-        for (const chunk of chunks) {
-          if (chunk === "\r") {
-            await request(`/api/panes/${encodeURIComponent(selection.pane)}/keys`, {
-              method: "POST",
-              body: { keys: ["Enter"] },
-            });
-          } else {
-            await request(`/api/panes/${encodeURIComponent(selection.pane)}/input`, {
-              method: "POST",
-              body: { data: chunk },
-            });
-          }
-        }
+        await request(`/api/panes/${encodeURIComponent(selection.pane)}/input`, {
+          method: "POST",
+          body: { data },
+        });
         await refreshActivePane(selection.pane);
       } catch (error) {
         setNotice({ tone: "danger", title: "Terminal input failed", body: message(error) });
@@ -299,23 +427,40 @@ function App() {
     terminalDataHandler.current = (data) => void sendTerminalData(data);
   }, [sendTerminalData]);
 
+  const openCreateSession = useCallback(() => {
+    setView("overview");
+    setShowCreateSession(true);
+    setNewSessionName((current) => current || defaultSessionName());
+  }, []);
+
   const createSession = useCallback(async () => {
-    const name = prompt("Session name", `work-${Math.floor(Date.now() / 1000)}`);
+    const name = newSessionName.trim();
+    const cwd = newSessionCwd.trim();
     if (!name) {
+      setNotice({ tone: "warning", title: "Session name is required" });
       return;
     }
 
     setOperation("create");
     try {
-      await request("/api/sessions", { method: "POST", body: { name } });
+      const nextSnapshot = await request<TmuxSnapshot>("/api/sessions", {
+        method: "POST",
+        body: cwd ? { name, cwd } : { name },
+      });
+      const createdSession = nextSnapshot.sessions.find((session) => session.name === name);
+      applySnapshot(nextSnapshot, { session: createdSession?.id });
       setNotice({ tone: "success", title: "Session created", body: name });
-      await refresh("background");
+      setNewSessionName(defaultSessionName());
+      setNewSessionCwd("");
+      setShowCreateSession(false);
+      setTerminalStatus("loading");
+      setView("manage");
     } catch (error) {
       setNotice({ tone: "danger", title: "Unable to create session", body: message(error) });
     } finally {
       setOperation(undefined);
     }
-  }, [refresh]);
+  }, [applySnapshot, newSessionCwd, newSessionName]);
 
   const killActiveWindow = useCallback(async () => {
     if (!selection.window) {
@@ -386,9 +531,9 @@ function App() {
       setSelection(nextSelection);
       setView("manage");
       setTerminalStatus("loading");
-      void refreshActivePane(nextSelection.pane);
+      void connectTerminalStream(nextSelection.pane);
     },
-    [refreshActivePane, snapshot],
+    [connectTerminalStream, snapshot],
   );
 
   const showOverview = useCallback(() => {
@@ -402,18 +547,42 @@ function App() {
 
   useEffect(() => {
     if (view !== "manage") {
+      terminalStream.current?.close();
+      terminalStream.current = undefined;
+      streamedPane.current = undefined;
       return;
     }
 
-    const timer = window.setInterval(() => {
-      void refreshActivePane();
-    }, 2_000);
-    return () => window.clearInterval(timer);
-  }, [refreshActivePane, view]);
+    if (selection.pane && streamedPane.current !== selection.pane) {
+      void connectTerminalStream(selection.pane);
+    }
+  }, [connectTerminalStream, selection.pane, view]);
+
+  useEffect(() => {
+    const element = terminalElement.current;
+    if (!element) {
+      return;
+    }
+
+    const updateScrollState = () => {
+      terminalUserScrolled.current = !isTerminalScrolledToBottom(element);
+    };
+
+    element.addEventListener("scroll", updateScrollState, { passive: true });
+    element.addEventListener("wheel", updateScrollState, { passive: true });
+    element.addEventListener("touchmove", updateScrollState, { passive: true });
+
+    return () => {
+      element.removeEventListener("scroll", updateScrollState);
+      element.removeEventListener("wheel", updateScrollState);
+      element.removeEventListener("touchmove", updateScrollState);
+    };
+  }, []);
 
   useEffect(() => {
     const fitTerminal = () => {
       if (terminal.current && selection.pane && view === "manage") {
+        fitTerminalToContainer(terminal.current);
         setFitSize(`${terminal.current.cols}x${terminal.current.rows}`);
         scheduleResizeActivePane(terminal.current.cols, terminal.current.rows);
       }
@@ -422,6 +591,10 @@ function App() {
     window.addEventListener("resize", fitTerminal);
     return () => window.removeEventListener("resize", fitTerminal);
   }, [scheduleResizeActivePane, selection.pane, view]);
+
+  useEffect(() => {
+    return () => terminalStream.current?.close();
+  }, []);
 
   useEffect(() => {
     if (view !== "overview" || !snapshot) {
@@ -517,7 +690,7 @@ function App() {
             className="primary"
             isDisabled={operation === "create"}
             type="button"
-            onPress={createSession}
+            onPress={openCreateSession}
           >
             {operation === "create" ? "Creating..." : "New session"}
           </Button>
@@ -535,11 +708,25 @@ function App() {
             <div>
               <h2>Sessions</h2>
               <p>
-                {totalPanes} active panes across {totalWindows} windows
+                {sessions.length === 0
+                  ? "Create a tmux session and open it in the browser."
+                  : `${totalPanes} active panes across ${totalWindows} windows`}
               </p>
             </div>
             <Chip className="count-pill">{sessions.length}</Chip>
           </div>
+          {showCreateSession || sessions.length === 0 ? (
+            <SessionComposer
+              cwd={newSessionCwd}
+              isCreating={operation === "create"}
+              name={newSessionName}
+              onCancel={() => setShowCreateSession(false)}
+              onCwdChange={setNewSessionCwd}
+              onNameChange={setNewSessionName}
+              onSubmit={() => void createSession()}
+              showCancel={sessions.length > 0}
+            />
+          ) : null}
           <SessionGrid
             status={status}
             sessions={sessions}
@@ -547,7 +734,7 @@ function App() {
             selectedSession={selection.session}
             previews={sessionPreviews}
             onRetry={() => void refresh("manual")}
-            onCreate={createSession}
+            onCreate={openCreateSession}
             onOpen={openSession}
           />
         </section>
@@ -558,7 +745,7 @@ function App() {
         >
           <div className="manager-header">
             <Button className="ghost" type="button" onPress={showOverview}>
-              Sessions
+              Back to sessions
             </Button>
             <div>
               <strong>{selectedSession?.name ?? "No session selected"}</strong>
@@ -579,7 +766,7 @@ function App() {
                   const pane = activeOrFirstPane(snapshot, windowId)?.id;
                   setSelection((current) => ({ ...current, window: windowId, pane }));
                   setTerminalStatus("loading");
-                  void refreshActivePane(pane);
+                  void connectTerminalStream(pane);
                 }}
               />
 
@@ -669,7 +856,7 @@ function App() {
                 onSelect={(paneId) => {
                   setSelection((current) => ({ ...current, pane: paneId }));
                   setTerminalStatus("loading");
-                  void refreshActivePane(paneId);
+                  void connectTerminalStream(paneId);
                 }}
               />
               <RendererMetrics fitSize={fitSize} />
@@ -713,8 +900,6 @@ function SessionGrid(props: {
         tone="neutral"
         title="No tmux sessions"
         body="Create a new session to start managing panes from the browser."
-        actionLabel="New session"
-        onAction={props.onCreate}
       />
     );
   }
@@ -757,6 +942,65 @@ function SessionGrid(props: {
         );
       })}
     </div>
+  );
+}
+
+function SessionComposer(props: {
+  cwd: string;
+  isCreating: boolean;
+  name: string;
+  onCancel: () => void;
+  onCwdChange: (value: string) => void;
+  onNameChange: (value: string) => void;
+  onSubmit: () => void;
+  showCancel: boolean;
+}) {
+  return (
+    <form
+      className="session-composer"
+      aria-label="Create session"
+      onSubmit={(event) => {
+        event.preventDefault();
+        props.onSubmit();
+      }}
+    >
+      <div className="composer-copy">
+        <strong>New tmux session</strong>
+        <span>Names may use letters, numbers, dot, underscore, plus, or dash.</span>
+      </div>
+      <Input
+        className="composer-name"
+        name="session-name"
+        aria-label="Session name"
+        autoComplete="off"
+        placeholder="work"
+        value={props.name}
+        onChange={(event) => props.onNameChange(event.target.value)}
+      />
+      <Input
+        className="composer-cwd"
+        name="session-cwd"
+        aria-label="Working directory"
+        autoComplete="off"
+        placeholder="optional working directory"
+        value={props.cwd}
+        onChange={(event) => props.onCwdChange(event.target.value)}
+      />
+      <div className="composer-actions">
+        {props.showCancel ? (
+          <Button className="ghost" type="button" onPress={props.onCancel}>
+            Cancel
+          </Button>
+        ) : null}
+        <Button
+          className="primary"
+          type="submit"
+          isDisabled={props.isCreating || !props.name.trim()}
+        >
+          {props.isCreating ? "Creating..." : "Create"}
+        </Button>
+      </div>
+    </form>
   );
 }
 
@@ -1008,13 +1252,63 @@ async function request<T>(
   return (await response.json()) as T;
 }
 
+function streamUrl(path: string) {
+  const base = apiBase ? new URL(apiBase, window.location.href) : new URL(window.location.href);
+  base.protocol = base.protocol === "https:" ? "wss:" : "ws:";
+  base.pathname = path;
+  base.search = "";
+  const token = apiToken();
+  if (token) {
+    base.searchParams.set("token", token);
+  }
+  return base.toString();
+}
+
+function apiToken() {
+  return configuredToken?.trim() || localStorage.getItem(apiTokenStorageKey)?.trim() || "";
+}
+
+function parseTerminalStreamMessage(value: unknown): TerminalStreamMessage | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as Partial<TerminalStreamMessage>;
+    if (parsed.type === "output" && typeof parsed.data === "string") {
+      return { type: "output", data: parsed.data };
+    }
+    if (parsed.type === "error" && typeof parsed.message === "string") {
+      return { type: "error", message: parsed.message };
+    }
+  } catch {
+    return undefined;
+  }
+
+  return undefined;
+}
+
+function isTerminalStreamOpen(socket: WebSocket | undefined): socket is WebSocket {
+  return socket?.readyState === WebSocket.OPEN;
+}
+
+function sendTerminalResize(socket: WebSocket | undefined, columns: number, rows: number) {
+  sendTerminalCommand(socket, { type: "resize", columns, rows });
+}
+
+function sendTerminalCommand(socket: WebSocket | undefined, command: TerminalStreamCommand) {
+  if (isTerminalStreamOpen(socket)) {
+    socket.send(JSON.stringify(command));
+  }
+}
+
 function requestHeaders(hasBody: boolean) {
   const headers: Record<string, string> = {};
   if (hasBody) {
     headers["Content-Type"] = "application/json";
   }
 
-  const token = configuredToken?.trim() || localStorage.getItem(apiTokenStorageKey)?.trim();
+  const token = apiToken();
   if (token) {
     headers.Authorization = `Bearer ${token}`;
   }
@@ -1042,11 +1336,60 @@ async function resizeActivePane(
   }
 }
 
-function cursorPosition(capture: CaptureResult) {
-  const row = clamp(capture.terminal.cursorRow, 0, Math.max(capture.terminal.rows - 1, 0));
-  const column = clamp(capture.terminal.cursorColumn, 0, Math.max(capture.terminal.columns - 1, 0));
+function resetTerminalSnapshot(term: WTerm) {
+  term.bridge?.init(term.cols, term.rows);
+}
 
-  return `\x1b[${row + 1};${column + 1}H`;
+function waitForLayout() {
+  return new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+function fitTerminalToContainer(term: WTerm) {
+  const fit = measureTerminalFit(term.element);
+  if (!fit) {
+    return;
+  }
+
+  if (fit.columns !== term.cols || fit.rows !== term.rows) {
+    term.resize(fit.columns, fit.rows);
+  }
+}
+
+function measureTerminalFit(element: HTMLElement) {
+  const styles = getComputedStyle(element);
+  const contentWidth =
+    element.clientWidth -
+    (Number.parseFloat(styles.paddingLeft) || 0) -
+    (Number.parseFloat(styles.paddingRight) || 0);
+  const contentHeight =
+    element.clientHeight -
+    (Number.parseFloat(styles.paddingTop) || 0) -
+    (Number.parseFloat(styles.paddingBottom) || 0);
+
+  const probeRow = document.createElement("div");
+  probeRow.className = "term-row";
+  probeRow.style.position = "absolute";
+  probeRow.style.visibility = "hidden";
+  const probeCell = document.createElement("span");
+  probeCell.textContent = "W";
+  probeRow.appendChild(probeCell);
+  element.appendChild(probeRow);
+  const cellWidth = probeCell.getBoundingClientRect().width;
+  const rowHeight = probeRow.getBoundingClientRect().height;
+  probeRow.remove();
+
+  if (contentWidth <= 0 || contentHeight <= 0 || cellWidth <= 0 || rowHeight <= 0) {
+    return undefined;
+  }
+
+  return {
+    columns: clamp(Math.floor(contentWidth / cellWidth), 20, 500),
+    rows: clamp(Math.floor(contentHeight / rowHeight), 5, 200),
+  };
+}
+
+function isTerminalScrolledToBottom(element: HTMLElement) {
+  return element.scrollHeight - element.scrollTop - element.clientHeight <= 5;
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -1055,6 +1398,10 @@ function clamp(value: number, min: number, max: number) {
 
 function message(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function defaultSessionName() {
+  return `work-${Math.floor(Date.now() / 1000)}`;
 }
 
 createRoot(document.querySelector<HTMLDivElement>("#app")!).render(<App />);

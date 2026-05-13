@@ -1,12 +1,16 @@
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { WebSocketServer, type WebSocket } from "ws";
 import { dirname, extname, join, normalize } from "node:path";
 import { fileURLToPath, URL } from "node:url";
-import { createTmuxService, type TmuxRunner } from "./tmux.js";
+import { createTmuxService, runTmux, type TmuxRunner } from "./tmux.js";
+import { sanitizeTarget } from "utils";
+import { createTmuxStream, type TmuxStreamRunner } from "./tmux-stream.js";
 
 export type ApiServerOptions = {
   authToken?: string;
   runTmux?: TmuxRunner;
+  runTmuxStream?: TmuxStreamRunner;
   staticDir?: string;
 };
 
@@ -18,7 +22,7 @@ export function createApiServer(options: ApiServerOptions = {}) {
   const staticDir = options.staticDir ?? defaultStaticDir;
   const authToken = options.authToken?.trim();
 
-  return createServer(async (request, response) => {
+  const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://localhost");
 
     try {
@@ -140,6 +144,107 @@ export function createApiServer(options: ApiServerOptions = {}) {
       send(response, 400, { error: error instanceof Error ? error.message : "Request failed" });
     }
   });
+
+  const wsServer = new WebSocketServer({ noServer: true });
+  server.on("upgrade", (request, socket, head) => {
+    const url = new URL(request.url ?? "/", "http://localhost");
+    const paneStreamTarget = match(url.pathname, /^\/api\/panes\/(.+)\/stream$/);
+
+    if (!paneStreamTarget) {
+      socket.destroy();
+      return;
+    }
+
+    if (authToken && !isAuthorized(request, authToken, url.searchParams.get("token"))) {
+      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+
+    wsServer.handleUpgrade(request, socket, head, (socket) => {
+      attachPaneStream(socket, decodeURIComponent(paneStreamTarget), options);
+    });
+  });
+
+  return server;
+}
+
+function attachPaneStream(socket: WebSocket, target: string, options: ApiServerOptions) {
+  const safeTarget = sanitizeTarget(target);
+  const runCommand = options.runTmux ?? runTmux;
+  const stream = createTmuxStream(
+    safeTarget,
+    {
+      onData: (data) => sendSocket(socket, { type: "output", data }),
+      onError: (message) => sendSocket(socket, { type: "error", message }),
+      onClose: () => socket.close(),
+    },
+    { runCommand, runStream: options.runTmuxStream },
+  );
+
+  socket.on("message", (raw) => {
+    try {
+      const data =
+        typeof raw === "string"
+          ? raw
+          : Buffer.concat(
+              (Array.isArray(raw) ? raw : [raw]).map((chunk) =>
+                Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk),
+              ),
+            ).toString("utf8");
+      const message = JSON.parse(data) as
+        | { type: "input"; data?: string }
+        | { type: "resize"; columns?: number; rows?: number };
+
+      if (message.type === "input") {
+        runSocketCommand(socket, runCommand, [
+          "send-keys",
+          "-t",
+          safeTarget,
+          "-l",
+          message.data ?? "",
+        ]);
+      } else if (message.type === "resize") {
+        runSocketCommand(socket, runCommand, [
+          "resize-pane",
+          "-t",
+          safeTarget,
+          "-x",
+          String(clampInteger(Number(message.columns), 20, 500)),
+          "-y",
+          String(clampInteger(Number(message.rows), 5, 200)),
+        ]);
+      }
+    } catch {
+      sendSocket(socket, { type: "error", message: "Invalid stream message" });
+    }
+  });
+
+  socket.on("close", () => stream.close());
+  socket.on("error", () => stream.close());
+}
+
+function runSocketCommand(socket: WebSocket, runCommand: TmuxRunner, args: string[]) {
+  void runCommand(args).catch((error: unknown) => {
+    sendSocket(socket, {
+      type: "error",
+      message: error instanceof Error ? error.message : "tmux command failed",
+    });
+  });
+}
+
+function clampInteger(value: number, min: number, max: number) {
+  if (!Number.isFinite(value)) {
+    return min;
+  }
+
+  return Math.max(min, Math.min(max, Math.trunc(value)));
+}
+
+function sendSocket(socket: WebSocket, data: unknown) {
+  if (socket.readyState === socket.OPEN) {
+    socket.send(JSON.stringify(data));
+  }
 }
 
 function serveStatic(staticDir: string, pathname: string, response: ServerResponse) {
@@ -209,13 +314,13 @@ async function readJson<T>(request: IncomingMessage): Promise<T> {
   }
 }
 
-function isAuthorized(request: IncomingMessage, token: string) {
+function isAuthorized(request: IncomingMessage, token: string, queryToken?: string | null) {
   const authorization = request.headers.authorization;
   if (authorization === `Bearer ${token}`) {
     return true;
   }
 
-  return request.headers["x-tmuapp-token"] === token;
+  return request.headers["x-tmuapp-token"] === token || queryToken === token;
 }
 
 function required(value: string | undefined, name: string) {
