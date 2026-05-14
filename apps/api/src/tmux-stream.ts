@@ -75,15 +75,18 @@ async function sendInitialCapture(
   try {
     const { stdout } = await runCommand(["capture-pane", "-e", "-p", "-S", "-240", "-t", target]);
     if (stdout) {
-      onData(trimTrailingBlankLines(stdout).replaceAll("\n", "\r\n"));
+      onData(normalizeAnsi(stdout));
     }
   } catch (error) {
     onError(error instanceof Error ? error.message : String(error));
   }
 }
 
-function trimTrailingBlankLines(value: string) {
-  return value.replace(/(?:\r?\n[ \t]*)+$/u, "");
+function normalizeAnsi(ansi: string) {
+  // tmux capture-pane output uses \n line endings. The terminal emulator
+  // needs \r\n (cursor return + line feed). Only add \r before \n when
+  // missing — don't break existing \r\n sequences or ANSI escape codes.
+  return ansi.replace(/(?<!\r)\n/gu, "\r\n").replace(/(?:\r?\n)[ \t]*$/u, "");
 }
 
 function handleControlLine(line: string, onData: (data: string) => void) {

@@ -79,7 +79,7 @@ function App() {
   const [pendingKillWindow, setPendingKillWindow] = useState<TmuxWindow>();
   const [previewRun, setPreviewRun] = useState(0);
   const [sessionPreviews, setSessionPreviews] = useState<Record<string, PreviewState>>({});
-  const [fitSize, setFitSize] = useState("pending");
+  const [, setFitSize] = useState("pending");
 
   const terminalElement = useRef<HTMLDivElement | null>(null);
   const terminal = useRef<WTerm | undefined>(undefined);
@@ -133,7 +133,7 @@ function App() {
         }
 
         terminal.current = new WTerm(element, {
-          autoResize: true,
+          autoResize: false,
           cols: columns || 120,
           cursorBlink: true,
           rows: rows || 34,
@@ -165,7 +165,7 @@ function App() {
 
       const shouldFollow = terminalShouldFollow.current;
       resetTerminalSnapshot(term);
-      term.write(capture.ansi.replaceAll("\n", "\r\n"));
+      term.write(normalizeAnsi(capture.ansi));
       scrollTerminalToBottomIfFollowing(term.element, shouldFollow);
     },
     [ensureTerminal],
@@ -267,7 +267,12 @@ function App() {
 
       resetTerminalSnapshot(term);
       setTerminalStatus("loading");
-      void refreshActivePane(paneId);
+
+      // Resize the tmux pane to match the terminal viewport BEFORE connecting
+      // the stream. This ensures the initial capture (sent via WebSocket by
+      // sendInitialCapture) is formatted for the correct dimensions, so the
+      // content renders without misalignment.
+      await resizeActivePane(paneId, term.cols, term.rows, setOperation, setFitSize);
 
       const socket = new WebSocket(streamUrl(`/api/panes/${encodeURIComponent(paneId)}/stream`));
       let receivedOutput = false;
@@ -276,9 +281,10 @@ function App() {
           socket.close();
           terminalStream.current = undefined;
           streamedPane.current = undefined;
+          // Stream didn't deliver content — fall back to HTTP capture.
           void refreshActivePane(paneId);
         }
-      }, 800);
+      }, 3000);
       terminalStream.current = socket;
       streamedPane.current = paneId;
 
@@ -341,6 +347,7 @@ function App() {
       ensureTerminal,
       refreshActivePane,
       renderTerminalText,
+      resizeActivePane,
       selectedPane?.height,
       selectedPane?.width,
       selection.pane,
@@ -389,6 +396,9 @@ function App() {
       }
 
       followTerminalOutput(terminalElement.current, terminalShouldFollow);
+      // Named keys like "Enter" must go through the HTTP /keys endpoint which maps
+      // them to actual terminal key sequences. The WebSocket stream only accepts
+      // raw character data, so named keys can't be sent through it directly.
       setOperation("input");
       try {
         await request(`/api/panes/${encodeURIComponent(selection.pane)}/keys`, {
@@ -414,11 +424,20 @@ function App() {
       }
 
       followTerminalOutput(terminalElement.current, terminalShouldFollow);
+      // The form-based input path: send text data + an Enter key via HTTP.
+      // When streaming live, the WTerm onData handler (sendTerminalData) already
+      // sends raw keystrokes through WebSocket — we don't need to duplicate that here.
+      // Using HTTP ensures the input + Enter is properly sequenced.
       setOperation("input");
       try {
         await request(`/api/panes/${encodeURIComponent(selection.pane)}/input`, {
           method: "POST",
           body: { data },
+        });
+        // Also send Enter after the input text so the shell executes it.
+        await request(`/api/panes/${encodeURIComponent(selection.pane)}/keys`, {
+          method: "POST",
+          body: { keys: ["Enter"] },
         });
         if (!isTerminalStreamOpen(terminalStream.current)) {
           await refreshActivePane(selection.pane);
@@ -717,6 +736,21 @@ function App() {
             <p>tmux fleet control</p>
           </div>
         </div>
+        {view === "manage" && selectedSession ? (
+          <div className="session-context">
+            <Button className="ghost" type="button" onPress={showOverview}>
+              Back
+            </Button>
+            <strong>{selectedSession.name}</strong>
+            <span>
+              {selectedSession.windows} windows ·{" "}
+              {panesForSession(snapshot, selectedSession.id).length} panes
+            </span>
+            <StatusChip tone={selectedSession.attached ? "success" : "warning"}>
+              {selectedSession.attached ? "attached" : "detached"}
+            </StatusChip>
+          </div>
+        ) : null}
         <nav className="actions" aria-label="Global actions">
           <StatusChip tone={health.tone}>{health.label}</StatusChip>
           <Button
@@ -801,147 +835,129 @@ function App() {
 
         {view === "manage" ? (
           <section className="manager" aria-label="Session manager">
-            <div className="manager-header">
-              <Button className="ghost" type="button" onPress={showOverview}>
-                Back to sessions
-              </Button>
-              <div>
-                <strong>{selectedSession?.name ?? "No session selected"}</strong>
-                <span>
-                  {selectedSession
-                    ? `${selectedSession.windows} windows ${selectedSession.attached ? "attached" : "detached"}`
-                    : "Select a session to inspect panes"}
-                </span>
-              </div>
-            </div>
+            <div className="manager-body">
+              <WindowStrip
+                windows={windows}
+                selectedWindow={selection.window}
+                onSelect={(windowId) => {
+                  const pane = activeOrFirstPane(snapshot, windowId)?.id;
+                  setSelection((current) => ({ ...current, window: windowId, pane }));
+                  setTerminalStatus("loading");
+                  void connectTerminalStream(pane);
+                }}
+              />
 
-            <div className="manager-grid">
-              <section
-                className="main-pane"
-                role="tabpanel"
-                aria-labelledby={selection.window ? windowTabId(selection.window) : undefined}
-              >
-                <WindowStrip
-                  windows={windows}
-                  selectedWindow={selection.window}
-                  onSelect={(windowId) => {
-                    const pane = activeOrFirstPane(snapshot, windowId)?.id;
-                    setSelection((current) => ({ ...current, window: windowId, pane }));
-                    setTerminalStatus("loading");
-                    void connectTerminalStream(pane);
-                  }}
-                />
-
-                <div className="terminal-shell">
-                  <div className="terminal-toolbar">
-                    <div>
-                      <h2 className="terminal-heading">
-                        {selectedPane?.title || selectedPane?.currentCommand || "No pane selected"}
-                      </h2>
-                      <span>
-                        {selectedPane
-                          ? `${selectedPane.id} ${selectedPane.width}x${selectedPane.height} ${selectedPane.currentPath}`
-                          : "Create a pane or choose another window"}
-                      </span>
-                    </div>
-                    <div className="terminal-actions">
-                      <Button
-                        className="ghost"
-                        type="button"
-                        onPress={() => void splitPane("horizontal")}
-                        isDisabled={!selection.pane || operation === "split"}
-                      >
-                        Split H
-                      </Button>
-                      <Button
-                        className="ghost"
-                        type="button"
-                        onPress={() => void splitPane("vertical")}
-                        isDisabled={!selection.pane || operation === "split"}
-                      >
-                        Split V
-                      </Button>
-                      <Button
-                        className="danger"
-                        type="button"
-                        onPress={killActiveWindow}
-                        isDisabled={!selection.window || operation === "kill"}
-                      >
-                        Kill Window
-                      </Button>
-                    </div>
+              <div className="terminal-shell">
+                <div className="terminal-toolbar">
+                  <div>
+                    <h2 className="terminal-heading">
+                      {selectedPane?.title || selectedPane?.currentCommand || "No pane selected"}
+                    </h2>
+                    <span>
+                      {selectedPane
+                        ? `${selectedPane.width}x${selectedPane.height} ${selectedPane.currentPath}`
+                        : "Create a pane or choose another window"}
+                    </span>
                   </div>
-
-                  <div className="terminal-wrap">
-                    {terminalStatus === "loading" ? (
-                      <InlineLoading label="Preparing terminal…" />
-                    ) : null}
-                    <div
-                      ref={terminalElement}
-                      id="terminal"
-                      className="terminal"
-                      aria-label="tmux pane terminal"
-                    />
-                  </div>
-
-                  <form
-                    className="input-row"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      followTerminalOutput(terminalElement.current, terminalShouldFollow);
-                      void sendInput(inputValue);
-                      setInputValue("");
-                    }}
-                  >
-                    <Input
-                      className="pane-input"
-                      name="pane-input"
-                      aria-label="Pane input"
-                      autoComplete="off"
-                      placeholder={'printf "hello"…'}
-                      value={inputValue}
-                      onChange={(event) => setInputValue(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Tab") {
-                          event.preventDefault();
-                          void sendInputKey("Tab", inputValue);
-                        }
-                      }}
-                    />
+                  <div className="terminal-actions">
                     <Button
-                      className="primary"
-                      type="submit"
-                      isDisabled={!selection.pane || inputValue.length === 0}
+                      className="ghost"
+                      type="button"
+                      onPress={() => void splitPane("horizontal")}
+                      isDisabled={!selection.pane || operation === "split"}
                     >
-                      {operation === "input" ? "Sending…" : "Send"}
+                      Split H
                     </Button>
                     <Button
                       className="ghost"
                       type="button"
-                      onPress={() => void sendKeys(["Enter"])}
+                      onPress={() => void splitPane("vertical")}
+                      isDisabled={!selection.pane || operation === "split"}
                     >
-                      Enter
+                      Split V
                     </Button>
-                  </form>
+                    <Button
+                      className="danger"
+                      type="button"
+                      onPress={killActiveWindow}
+                      isDisabled={!selection.window || operation === "kill"}
+                    >
+                      Kill Window
+                    </Button>
+                  </div>
                 </div>
-              </section>
 
-              <aside className="inspector" aria-label="Panes">
-                <div className="panel-heading">
-                  <span>Panes</span>
-                  <small>{panes.length}</small>
+                <div className="terminal-wrap">
+                  {terminalStatus === "loading" ? (
+                    <InlineLoading label="Preparing terminal…" />
+                  ) : null}
+                  <div
+                    ref={terminalElement}
+                    id="terminal"
+                    className="terminal"
+                    aria-label="tmux pane terminal"
+                  />
                 </div>
-                <PaneList
-                  panes={panes}
-                  selectedPane={selection.pane}
-                  onSelect={(paneId) => {
-                    setSelection((current) => ({ ...current, pane: paneId }));
-                    setTerminalStatus("loading");
-                    void connectTerminalStream(paneId);
+
+                <form
+                  className="input-row"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    followTerminalOutput(terminalElement.current, terminalShouldFollow);
+                    void sendInput(inputValue);
+                    setInputValue("");
                   }}
-                />
-                <RendererMetrics fitSize={fitSize} />
-              </aside>
+                >
+                  <span className="input-label">Send command to active pane</span>
+                  <Input
+                    className="pane-input"
+                    name="pane-input"
+                    aria-label="Pane input"
+                    autoComplete="off"
+                    placeholder={'printf "hello"…'}
+                    value={inputValue}
+                    onChange={(event) => setInputValue(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Tab") {
+                        event.preventDefault();
+                        void sendInputKey("Tab", inputValue);
+                      }
+                    }}
+                  />
+                  <Button
+                    className="primary"
+                    type="submit"
+                    isDisabled={!selection.pane || inputValue.length === 0}
+                  >
+                    {operation === "input" ? "Sending…" : "Run"}
+                  </Button>
+                  <Button className="ghost" type="button" onPress={() => void sendKeys(["Enter"])}>
+                    Enter
+                  </Button>
+                  {panes.length > 1 ? (
+                    <Chip className="pane-count-pill">{panes.length}</Chip>
+                  ) : null}
+                </form>
+              </div>
+
+              {panes.length > 1 ? (
+                <div className="pane-strip" aria-label="Panes">
+                  {panes.map((pane) => (
+                    <Button
+                      key={pane.id}
+                      className={`pane-tab ${pane.id === selection.pane ? "selected" : ""}`}
+                      type="button"
+                      onPress={() => {
+                        setSelection((current) => ({ ...current, pane: pane.id }));
+                        setTerminalStatus("loading");
+                        void connectTerminalStream(pane.id);
+                      }}
+                    >
+                      {pane.title || pane.currentCommand || pane.id}
+                    </Button>
+                  ))}
+                </div>
+              ) : null}
             </div>
           </section>
         ) : null}
@@ -1000,13 +1016,13 @@ function SessionGrid(props: {
         const path = primaryPane?.currentPath || "No working directory";
 
         return (
-          <button
+          <Button
             key={session.id}
             className={`session-card ${session.id === props.selectedSession ? "selected" : ""}`}
             data-session-card={session.id}
             type="button"
             aria-label={`Open session ${session.name} with ${windows.length} windows and ${panes.length} panes`}
-            onClick={() => props.onOpen(session.id)}
+            onPress={() => props.onOpen(session.id)}
           >
             <span className="session-card-top">
               <strong>{session.name}</strong>
@@ -1021,7 +1037,7 @@ function SessionGrid(props: {
             </span>
             <span className="session-path">{path}</span>
             <pre className={`session-preview ${preview.status}`}>{preview.text}</pre>
-          </button>
+          </Button>
         );
       })}
     </div>
@@ -1101,76 +1117,20 @@ function WindowStrip(props: {
   return (
     <div className="window-strip" role="tablist" aria-label="Windows">
       {props.windows.map((window) => (
-        <button
+        <Button
           key={window.id}
           id={windowTabId(window.id)}
           className={`window-tab ${window.id === props.selectedWindow ? "selected" : ""}`}
-          role="tab"
-          aria-selected={window.id === props.selectedWindow}
           type="button"
-          onClick={() => props.onSelect(window.id)}
+          onPress={() => props.onSelect(window.id)}
         >
           <span>
             {window.index}:{window.name}
           </span>
           <small>{window.panes}</small>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function PaneList(props: {
-  panes: TmuxPane[];
-  selectedPane: string | undefined;
-  onSelect: (paneId: string) => void;
-}) {
-  if (props.panes.length === 0) {
-    return (
-      <div className="pane-list">
-        <div className="empty-line">No panes in this window</div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="pane-list">
-      {props.panes.map((pane) => (
-        <Button
-          key={pane.id}
-          className={`pane-item ${pane.id === props.selectedPane ? "selected" : ""}`}
-          type="button"
-          onPress={() => props.onSelect(pane.id)}
-        >
-          <span>{pane.title || pane.currentCommand || pane.id}</span>
-          <small>
-            {pane.width}x{pane.height} {pane.currentPath}
-          </small>
         </Button>
       ))}
     </div>
-  );
-}
-
-function RendererMetrics({ fitSize }: { fitSize: string }) {
-  return (
-    <section className="metrics">
-      <h2>Renderer</h2>
-      <dl>
-        <div>
-          <dt>Mode</dt>
-          <dd>wterm ANSI</dd>
-        </div>
-        <div>
-          <dt>Fit</dt>
-          <dd id="fit-size">{fitSize}</dd>
-        </div>
-        <div>
-          <dt>API</dt>
-          <dd>{apiLabel}</dd>
-        </div>
-      </dl>
-    </section>
   );
 }
 
@@ -1655,21 +1615,31 @@ function fitTerminalToContainer(
   if (fit.columns !== term.cols || fit.rows !== term.rows) {
     term.resize(fit.columns, fit.rows);
   }
+  // WTerm._lockHeight() sets an inline height that overrides our CSS
+  // height:100%. After resize, the inline height is stale (based on the
+  // old rows). Remove it so CSS height:100% takes effect and the element
+  // fills the parent container correctly.
+  term.element.style.height = "";
 }
 
 function measureTerminalFit(
   element: HTMLElement,
   metricsRef?: React.MutableRefObject<TerminalCellMetrics | undefined>,
 ) {
-  const styles = getComputedStyle(element);
+  // WTerm with autoResize:false sets its own height via _lockHeight(),
+  // which makes element.clientHeight reflect WTerm's desired viewport size
+  // rather than the available space in the container. Measure the parent
+  // instead so we resize to the actual available dimensions.
+  const container = element.parentElement ?? element;
+  const containerStyles = getComputedStyle(container);
   const contentWidth =
-    element.clientWidth -
-    (Number.parseFloat(styles.paddingLeft) || 0) -
-    (Number.parseFloat(styles.paddingRight) || 0);
+    container.clientWidth -
+    (Number.parseFloat(containerStyles.paddingLeft) || 0) -
+    (Number.parseFloat(containerStyles.paddingRight) || 0);
   const contentHeight =
-    element.clientHeight -
-    (Number.parseFloat(styles.paddingTop) || 0) -
-    (Number.parseFloat(styles.paddingBottom) || 0);
+    container.clientHeight -
+    (Number.parseFloat(containerStyles.paddingTop) || 0) -
+    (Number.parseFloat(containerStyles.paddingBottom) || 0);
 
   const metrics = metricsRef?.current ?? measureTerminalCell(element);
   if (metricsRef && !metricsRef.current) {
@@ -1709,6 +1679,22 @@ function clamp(value: number, min: number, max: number) {
 
 function message(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function normalizeAnsi(ansi: string) {
+  // tmux-captured output may use bare \n without \r, which confuses terminals
+  // that expect \r\n to move cursor to column 0 before advancing a row.
+  // However, some ANSI sequences already include \r (e.g. cursor positioning),
+  // so we only add \r before \n that are NOT preceded by \r.
+  let result = "";
+  for (let i = 0; i < ansi.length; i++) {
+    if (ansi[i] === "\n" && (i === 0 || ansi[i - 1] !== "\r")) {
+      result += "\r\n";
+    } else {
+      result += ansi[i];
+    }
+  }
+  return result;
 }
 
 function defaultSessionName() {

@@ -29,7 +29,6 @@ test("wterm renders tmux capture and sends terminal keyboard input", async ({ pa
   await mockTmuxApi(page, { inputPayloads, keyPayloads, resizePayloads });
   await openSessionManager(page);
 
-  await expect(page.getByText("wterm ANSI")).toBeVisible();
   await expect(page.locator("#terminal")).toContainText("ready");
   await expect(page.locator("#terminal")).toContainText("prompt> waiting");
   await expect(page.locator("#terminal")).toContainText("from mocked tmux");
@@ -76,10 +75,10 @@ test("resizes narrow tmux panes to fill the browser terminal", async ({ page }) 
   await openSessionManager(page, "ready");
 
   await expect.poll(() => resizePayloads.at(-1)?.width ?? 0).toBeGreaterThan(120);
-  await expect.poll(() => page.locator("#fit-size").textContent()).not.toContain("80x24");
-  await expect
-    .poll(() => page.getByRole("button", { name: /shell/ }).textContent())
-    .toContain(paneSize.width + "x" + paneSize.height);
+  await expectReasonableTerminalFit(page);
+  await expect(page.locator(".terminal-toolbar")).toContainText(
+    paneSize.width + "x" + paneSize.height,
+  );
   await expect(page.locator("#terminal")).toContainText(
     "%0 " + paneSize.width + "x" + paneSize.height + " /home/bangwu/code/tmuapp/apps/api",
   );
@@ -164,7 +163,7 @@ test("wterm keeps a measurable monospace grid and focus input", async ({ page })
   expect(metrics.rowHeight).toBeGreaterThan(12);
   expect(metrics.cellWidth).toBeGreaterThan(0);
 
-  await expect(page.locator("#fit-size")).not.toHaveText("pending");
+  await expectReasonableTerminalFit(page);
 });
 
 test("wterm keeps the cursor on the prompt when capture includes scrollback", async ({ page }) => {
@@ -273,7 +272,7 @@ test("pane input follows new output and forwards completion tab", async ({ page 
   await expect.poll(() => terminalScrollMetrics(page)).toMatchObject({ top: 0 });
 
   await page.getByLabel("Pane input").fill("ls");
-  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("button", { name: "Run" }).click();
 
   await expect.poll(() => inputPayloads.join("")).toContain("ls");
   await expect(terminal).toContainText("prompt>");
@@ -351,7 +350,9 @@ test("creates a session from the first-run form and opens the manager", async ({
       return;
     }
 
-    await route.fulfill({ json: { sessions: [], windows: {}, panes: {} } });
+    await route.fulfill({
+      json: created.length ? snapshot : { sessions: [], windows: {}, panes: {} },
+    });
   });
   await page.route("**/api/panes/*/capture?*", async (route) => {
     await route.fulfill({
@@ -374,7 +375,7 @@ test("creates a session from the first-run form and opens the manager", async ({
 
   await expect.poll(() => created).toEqual([{ name: "work", cwd: "/repo" }]);
   await expect(page.getByText("Session created")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Back to sessions" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Back" })).toBeVisible();
   await expect(page.locator("#terminal")).toContainText("ready");
 });
 
@@ -563,14 +564,43 @@ async function terminalScrollMetrics(page: Page) {
 }
 
 async function expectReasonableTerminalFit(page: Page) {
-  await expect.poll(async () => page.locator("#fit-size").textContent()).not.toBe("pending");
-  const fit = (await page.locator("#fit-size").textContent()) ?? "";
-  const [columns, rows] = fit.split("x").map((value) => Number.parseInt(value, 10));
+  const readFit = () =>
+    page.locator("#terminal").evaluate((element) => {
+      const styles = getComputedStyle(element);
+      const contentWidth =
+        element.clientWidth -
+        (Number.parseFloat(styles.paddingLeft) || 0) -
+        (Number.parseFloat(styles.paddingRight) || 0);
+      const contentHeight =
+        element.clientHeight -
+        (Number.parseFloat(styles.paddingTop) || 0) -
+        (Number.parseFloat(styles.paddingBottom) || 0);
 
-  expect(columns).toBeGreaterThan(30);
-  expect(columns).toBeLessThan(260);
-  expect(rows).toBeGreaterThan(8);
-  expect(rows).toBeLessThan(80);
+      const probeRow = document.createElement("div");
+      probeRow.className = "term-row";
+      probeRow.style.position = "absolute";
+      probeRow.style.visibility = "hidden";
+      const probeCell = document.createElement("span");
+      probeCell.textContent = "W";
+      probeRow.appendChild(probeCell);
+      element.appendChild(probeRow);
+      const cellWidth = probeCell.getBoundingClientRect().width;
+      const rowHeight = probeRow.getBoundingClientRect().height;
+      probeRow.remove();
+
+      return {
+        columns: cellWidth ? Math.floor(contentWidth / cellWidth) : 0,
+        rows: rowHeight ? Math.floor(contentHeight / rowHeight) : 0,
+      };
+    });
+
+  await expect.poll(async () => (await readFit()).columns).toBeGreaterThan(30);
+  const fit = await readFit();
+
+  expect(fit.columns).toBeGreaterThan(30);
+  expect(fit.columns).toBeLessThan(260);
+  expect(fit.rows).toBeGreaterThan(8);
+  expect(fit.rows).toBeLessThan(80);
 }
 
 async function expectTerminalFillsManager(page: Page) {
@@ -584,8 +614,8 @@ async function expectTerminalFillsManager(page: Page) {
         };
 
         return {
-          manager: rect(".manager-grid"),
-          mainPane: rect(".main-pane"),
+          manager: rect(".manager-body"),
+          terminalShell: rect(".terminal-shell"),
           terminalWrap: rect(".terminal-wrap"),
           terminal: rect("#terminal"),
           viewportWidth: window.innerWidth,
@@ -594,7 +624,7 @@ async function expectTerminalFillsManager(page: Page) {
     )
     .toMatchObject({
       manager: { width: expect.any(Number) },
-      mainPane: { width: expect.any(Number) },
+      terminalShell: { width: expect.any(Number) },
       terminalWrap: { width: expect.any(Number) },
       terminal: { width: expect.any(Number) },
     });
@@ -604,8 +634,8 @@ async function expectTerminalFillsManager(page: Page) {
       document.querySelector(selector)?.getBoundingClientRect().width ?? 0;
 
     return {
-      manager: width(".manager-grid"),
-      mainPane: width(".main-pane"),
+      manager: width(".manager-body"),
+      terminalShell: width(".terminal-shell"),
       terminalWrap: width(".terminal-wrap"),
       terminal: width("#terminal"),
       viewport: window.innerWidth,
@@ -613,8 +643,8 @@ async function expectTerminalFillsManager(page: Page) {
   });
 
   expect(sizes.manager).toBeGreaterThan(sizes.viewport - 2);
-  expect(sizes.mainPane).toBeGreaterThan(sizes.manager - 2);
-  expect(sizes.terminalWrap).toBeGreaterThan(sizes.mainPane - 2);
+  expect(sizes.terminalShell).toBeGreaterThan(sizes.manager - 2);
+  expect(sizes.terminalWrap).toBeGreaterThan(sizes.terminalShell - 2);
   expect(sizes.terminal).toBeGreaterThan(sizes.terminalWrap - 2);
 }
 
