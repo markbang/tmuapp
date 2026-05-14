@@ -286,6 +286,43 @@ test("pane input follows new output and forwards completion tab", async ({ page 
   await expect(page.getByLabel("Pane input")).toHaveValue("");
 });
 
+test("keeps product chrome outside the terminal boundary", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 820 });
+  await mockTmuxApi(page, { inputPayloads: [], keyPayloads: [], resizePayloads: [] });
+  await openSessionManager(page);
+
+  await expect(page.locator("#terminal .term-row").first()).toBeVisible();
+  await expect(
+    page.locator(".term-row").first().locator("xpath=ancestor::*[@id='terminal']"),
+  ).toHaveCount(1);
+
+  const metrics = await page.evaluate(() => {
+    const viewport = document.querySelector(".terminal-wrap");
+    const terminal = document.querySelector("#terminal");
+    const shell = document.querySelector(".terminal-shell");
+    if (
+      !(viewport instanceof HTMLElement) ||
+      !(terminal instanceof HTMLElement) ||
+      !(shell instanceof HTMLElement)
+    ) {
+      return undefined;
+    }
+
+    return {
+      bodyScrollHeight: document.documentElement.scrollHeight,
+      bodyClientHeight: document.documentElement.clientHeight,
+      terminalHeight: terminal.getBoundingClientRect().height,
+      shellHeight: shell.getBoundingClientRect().height,
+      viewportHeight: viewport.getBoundingClientRect().height,
+    };
+  });
+
+  expect(metrics).toBeDefined();
+  expect(metrics!.bodyScrollHeight).toBeLessThanOrEqual(metrics!.bodyClientHeight + 1);
+  expect(metrics!.terminalHeight).toBeGreaterThan(320);
+  expect(metrics!.viewportHeight).toBeGreaterThan(metrics!.shellHeight * 0.6);
+});
+
 test("wterm forwards raw keyboard and paste sequences", async ({ page, context, browserName }) => {
   const inputPayloads: string[] = [];
 

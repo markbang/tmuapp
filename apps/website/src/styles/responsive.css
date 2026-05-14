@@ -1,0 +1,144 @@
+@media (max-width: 980px) {
+  .app-shell {
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .topbar {
+    min-height: 64px;
+    flex-wrap: wrap;
+    padding: 10px;
+  }
+
+  .overview {
+    padding: 14px;
+  }
+
+  .session-composer {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .composer-copy,
+  .composer-actions {
+    grid-column: 1 / -1;
+  }
+
+  .manager-body {
+    grid-template-rows: 50px minmax(60svh, 1fr) 54px auto;
+  }
+
+  .terminal-toolbar {
+    height: auto;
+    min-height: 42px;
+    align-items: start;
+    flex-direction: column;
+    padding: 8px 10px;
+  }
+
+  .terminal-actions {
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  .input-label {
+    display: none;
+  }
+
+  .session-context {
+    order: 3;
+    width: 100%;
+  }
+}
+
+@media (max-width: 560px) {
+  .actions {
+    width: 100%;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+
+  .overview-head {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .session-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .session-composer {
+    grid-template-columns: 1fr;
+  }
+
+  .composer-actions {
+    justify-content: stretch;
+  }
+
+  .composer-actions button {
+    width: 100%;
+  }
+
+  .terminal-shell {
+    grid-template-rows: auto minmax(320px, 1fr) auto;
+  }
+
+  .input-row {
+    flex-wrap: wrap;
+  }
+
+  .input-label {
+    display: none;
+  }
+
+  .pane-input {
+    flex: 1 1 100%;
+  }
+
+  .notice {
+    position: static;
+    width: auto;
+    margin: 10px;
+  }
+
+  .floating-panel {
+    align-items: end;
+    padding: 20px 10px max(20px, env(safe-area-inset-bottom));
+  }
+
+  .panel-actions,
+  .panel-actions button {
+    width: 100%;
+  }
+
+  .panel-actions {
+    flex-direction: column-reverse;
+  }
+
+  .pane-strip {
+    flex-wrap: wrap;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    scroll-behavior: auto !important;
+    transition-duration: 1ms !important;
+  }
+
+  .session-card:hover,
+  .session-card:active,
+  .primary:active,
+  .ghost:active,
+  .danger:active,
+  .window-tab:active,
+  .pane-tab:active {
+    transform: none;
+  }
+
+  [class*="spinner"],
+  [class*="Spinner"] {
+    animation: none !important;
+  }
+}

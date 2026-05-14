@@ -1,0 +1,147 @@
+.floating-panel {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: start center;
+  padding: 72px 20px 20px;
+  background: rgba(1, 1, 2, 0.62);
+  overscroll-behavior: contain;
+}
+
+.panel-card {
+  width: min(460px, 100%);
+  display: grid;
+  gap: 14px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 8px;
+  padding: 16px;
+  color: var(--ink);
+  background: var(--surface-2);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+}
+
+.panel-card h2 {
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+.panel-card p {
+  color: var(--ink-muted);
+}
+
+.confirm-panel {
+  border-color: rgba(255, 107, 107, 0.38);
+}
+
+.panel-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.manager {
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.manager-body {
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) 54px auto;
+}
+
+.session-context {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.session-context strong {
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 650;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-context span {
+  color: var(--ink-subtle);
+  font-size: 13px;
+}
+
+.window-tab.selected {
+  border-color: rgba(94, 106, 210, 0.55);
+  background: rgba(94, 106, 210, 0.16);
+}
+
+.window-strip {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: auto hidden;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--surface-1);
+  height: 50px;
+}
+
+.pane-strip {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: auto hidden;
+  padding: 8px 14px;
+  border-top: 1px solid var(--hairline);
+  background: var(--surface-1);
+}
+
+.pane-tab {
+  min-height: 30px;
+  border-radius: 6px;
+  border: 1px solid var(--hairline);
+  padding: 0 10px;
+  color: var(--ink-subtle);
+  background: transparent;
+  font-size: 12px;
+  letter-spacing: 0;
+  transition:
+    border-color 150ms ease,
+    background-color 150ms ease,
+    color 150ms ease;
+}
+
+.pane-tab:hover {
+  border-color: var(--hairline-strong);
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.pane-tab.selected {
+  border-color: rgba(94, 106, 210, 0.55);
+  background: rgba(94, 106, 210, 0.16);
+  color: var(--ink);
+}
+
+.window-strip.empty-line {
+  padding: 14px;
+}
+
+.window-tab {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 220px;
+  padding: 0 12px;
+}

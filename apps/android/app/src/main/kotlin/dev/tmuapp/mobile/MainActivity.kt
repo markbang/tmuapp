@@ -51,33 +51,11 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import java.net.URLEncoder
-import java.nio.charset.StandardCharsets
-import java.util.concurrent.TimeUnit
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import kotlin.system.exitProcess
 
-private val Canvas = Color(0xFF010102)
-private val Surface1 = Color(0xFF0F1011)
-private val Surface2 = Color(0xFF141516)
-private val Primary = Color(0xFF5E6AD2)
-private val Ink = Color(0xFFF7F8F8)
-private val InkMuted = Color(0xFF8A8F98)
-private val Stroke = Color(0xFF2A2B30)
 private const val CrashPrefs = "tmuapp.crash"
 private const val LastCrash = "lastCrash"
-private val JsonMediaType = "application/json; charset=utf-8".toMediaType()
-private val HttpClient = OkHttpClient.Builder()
-    .connectTimeout(5, TimeUnit.SECONDS)
-    .readTimeout(5, TimeUnit.SECONDS)
-    .writeTimeout(5, TimeUnit.SECONDS)
-    .build()
 
 class MainActivity : ComponentActivity() {
     private val crashPrefs by lazy { getSharedPreferences(CrashPrefs, Context.MODE_PRIVATE) }
@@ -244,7 +222,7 @@ private fun Header() {
             ),
         )
         BasicText(
-            text = "tmux sessions, panes, ANSI capture",
+            text = "mobile cockpit for tmux quick actions",
             style = TextStyle(
                 color = InkMuted,
                 fontSize = 14.sp,
@@ -364,36 +342,3 @@ private data class Action(
     val label: String,
     val onClick: () -> Unit,
 )
-
-private suspend fun executeRequest(
-    apiBase: String,
-    apiToken: String?,
-    method: String,
-    path: String,
-    body: String?,
-): String = withContext(Dispatchers.IO) {
-    val request = Request.Builder()
-        .url(apiBase + path)
-        .method(method, body?.toRequestBody(JsonMediaType))
-        .apply {
-            if (apiToken != null) {
-                header("Authorization", "Bearer $apiToken")
-            }
-        }
-        .build()
-
-    HttpClient.newCall(request).execute().use { response ->
-        "HTTP ${response.code}\n${response.body.string()}"
-    }
-}
-
-private fun urlEncode(value: String): String =
-    URLEncoder.encode(value, StandardCharsets.UTF_8.name()).replace("+", "%20")
-
-private fun jsonEscape(value: String): String =
-    value
-        .replace("\\", "\\\\")
-        .replace("\"", "\\\"")
-        .replace("\n", "\\n")
-        .replace("\r", "\\r")
-        .replace("\t", "\\t")

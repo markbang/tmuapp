@@ -1,0 +1,343 @@
+html,
+body,
+#app,
+.app-shell {
+  height: 100%;
+}
+
+body {
+  overflow: hidden;
+}
+
+#app,
+.app-shell {
+  min-height: 100svh;
+}
+
+.app-shell {
+  height: 100svh;
+  display: grid;
+  grid-template-rows: 64px minmax(0, 1fr);
+  overflow: hidden;
+  background: var(--canvas);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 max(20px, env(safe-area-inset-right)) 0 max(20px, env(safe-area-inset-left));
+  border-bottom: 1px solid var(--hairline);
+  background: rgba(1, 1, 2, 0.96);
+  backdrop-filter: blur(10px);
+  contain: paint;
+  will-change: transform;
+}
+
+.brand,
+.actions,
+.terminal-actions {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  color: #fff;
+  background: var(--primary);
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+h1 {
+  font-size: 17px;
+  font-weight: 650;
+  line-height: 1.1;
+  letter-spacing: 0;
+}
+
+.brand p,
+.overview-head p,
+.terminal-toolbar span,
+.window-tab small,
+.session-stats,
+.session-path,
+.empty-line {
+  color: var(--ink-subtle);
+}
+
+.workspace {
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  background: var(--canvas);
+}
+
+.overview {
+  min-height: 0;
+  height: 100%;
+  overflow: auto;
+  padding: 22px;
+}
+
+.overview-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+  max-width: 1360px;
+  margin: 0 auto 16px;
+}
+
+.overview-head h2 {
+  color: var(--ink);
+  font-size: 28px;
+  font-weight: 650;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.session-grid {
+  max-width: 1360px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 12px;
+}
+
+.session-composer {
+  max-width: 1360px;
+  margin: 0 auto 12px;
+  display: grid;
+  grid-template-columns: minmax(190px, 0.65fr) minmax(180px, 0.9fr) minmax(220px, 1.15fr) auto;
+  align-items: end;
+  gap: 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface-1);
+}
+
+.composer-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  padding-bottom: 4px;
+}
+
+.composer-copy strong {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.composer-copy span {
+  color: var(--ink-subtle);
+  font-size: 12px;
+}
+
+.composer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.composer-name,
+.composer-cwd {
+  min-width: 0;
+}
+
+.session-card {
+  min-width: 0;
+  height: 238px;
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  gap: 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 14px;
+  color: var(--ink);
+  text-align: left;
+  background: var(--surface-1);
+  cursor: pointer;
+  content-visibility: auto;
+  contain-intrinsic-size: 238px;
+  transition:
+    border-color 150ms ease,
+    background 150ms ease,
+    transform 150ms ease;
+}
+
+.session-card:hover,
+.session-card.selected {
+  border-color: rgba(94, 106, 210, 0.58);
+  background: #121318;
+}
+
+.session-card:hover {
+  transform: translateY(-1px);
+}
+
+.session-card:active,
+.primary:active,
+.ghost:active,
+.danger:active,
+.window-tab:active,
+.pane-tab:active {
+  transform: translateY(1px);
+}
+
+.session-card-top,
+.session-stats {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.session-card-top {
+  justify-content: space-between;
+}
+
+.session-card strong,
+.session-path,
+.session-stats span,
+.window-tab span,
+.pane-tab,
+.terminal-heading,
+.terminal-toolbar span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-card strong {
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.session-stats {
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.session-stats span {
+  max-width: 100%;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  padding: 2px 8px;
+  background: var(--surface-2);
+}
+
+.session-path {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.session-preview {
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 10px;
+  color: #d8dee9;
+  background: #050506;
+  font: 12px/1.35 var(--mono);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  tab-size: 8;
+}
+
+.session-preview.loading,
+.session-preview.empty,
+.session-preview.fallback {
+  color: var(--ink-subtle);
+}
+
+.empty-state {
+  max-width: 1360px;
+  min-height: 190px;
+  margin: 0 auto;
+  display: grid;
+  align-content: center;
+  justify-items: start;
+  gap: 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 24px;
+  color: var(--ink-muted);
+  background: var(--surface-1);
+}
+
+.empty-state strong {
+  color: var(--ink);
+  font-size: 18px;
+}
+
+.empty-state.danger {
+  border-color: rgba(255, 107, 107, 0.35);
+  background: var(--danger-bg);
+}
+
+.inline-loading {
+  max-width: 1360px;
+  min-height: 190px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  color: var(--ink-muted);
+  background: var(--surface-1);
+}
+
+.notice {
+  position: absolute;
+  top: 12px;
+  right: 20px;
+  z-index: 30;
+  width: min(520px, calc(100vw - 40px));
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 8px;
+  padding: 12px;
+  color: var(--ink);
+  background: var(--surface-2);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35);
+}
+
+.notice.danger {
+  border-color: rgba(255, 107, 107, 0.4);
+  background: #1a1112;
+}
+
+.notice.warning {
+  border-color: rgba(217, 154, 43, 0.38);
+}
+
+.notice-close {
+  white-space: nowrap;
+}

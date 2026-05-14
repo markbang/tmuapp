@@ -10,6 +10,25 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createRoot } from "react-dom/client";
 import { type TmuxPane, type TmuxSession, type TmuxSnapshot, type TmuxWindow } from "utils";
 import "./style.css";
+import { apiLabel, apiTokenStorageKey, request, streamUrl } from "./api/client";
+import {
+  fitTerminalToContainer,
+  type TerminalCellMetrics,
+  waitForLayout,
+} from "./terminal/terminal-fit";
+import {
+  isTerminalStreamOpen,
+  normalizeAnsi,
+  parseTerminalStreamMessage,
+  sendTerminalCommand,
+  sendTerminalResize,
+} from "./terminal/terminal-protocol";
+import {
+  followTerminalOutput,
+  isScrolledNearTop,
+  isScrolledToBottom,
+  scrollTerminalToBottomIfFollowing,
+} from "./terminal/terminal-scroll";
 
 type CaptureResult = {
   target: string;
@@ -43,22 +62,6 @@ type PreviewState = {
   text: string;
   status: "loading" | "ready" | "fallback" | "empty";
 };
-
-type TerminalStreamMessage = { type: "output"; data: string } | { type: "error"; message: string };
-
-type TerminalStreamCommand =
-  | { type: "input"; data: string }
-  | { type: "resize"; columns: number; rows: number };
-
-type TerminalCellMetrics = {
-  cellWidth: number;
-  rowHeight: number;
-};
-
-const apiBase = import.meta.env.VITE_API_BASE ?? "";
-const configuredToken = import.meta.env.VITE_TMUAPP_TOKEN as string | undefined;
-const apiTokenStorageKey = "tmuapp.apiToken";
-const apiLabel = apiBase || "same-origin / Vite proxy";
 
 function App() {
   const [view, setView] = useState<View>("overview");
@@ -142,7 +145,13 @@ function App() {
         });
         terminalReady.current = terminal.current.init();
         element.addEventListener("scroll", () => {
-          terminalShouldFollow.current = isScrolledToBottom(element);
+          if (isScrolledNearTop(element)) {
+            terminalShouldFollow.current = false;
+            return;
+          }
+          if (isScrolledToBottom(element)) {
+            terminalShouldFollow.current = true;
+          }
         });
       }
 
@@ -1459,87 +1468,6 @@ function stripAnsi(value: string) {
   return value.replace(ansiPattern, "");
 }
 
-async function request<T>(
-  path: string,
-  init: { method?: string; body?: unknown } = {},
-): Promise<T> {
-  const response = await fetch(`${apiBase}${path}`, {
-    method: init.method ?? "GET",
-    headers: requestHeaders(init.body !== undefined),
-    body: init.body ? JSON.stringify(init.body) : undefined,
-  });
-
-  if (!response.ok) {
-    throw new Error((await response.text()) || response.statusText);
-  }
-
-  return (await response.json()) as T;
-}
-
-function streamUrl(path: string) {
-  const base = apiBase ? new URL(apiBase, window.location.href) : new URL(window.location.href);
-  base.protocol = base.protocol === "https:" ? "wss:" : "ws:";
-  base.pathname = path;
-  base.search = "";
-  const token = apiToken();
-  if (token) {
-    base.searchParams.set("token", token);
-  }
-  return base.toString();
-}
-
-function apiToken() {
-  return configuredToken?.trim() || localStorage.getItem(apiTokenStorageKey)?.trim() || "";
-}
-
-function parseTerminalStreamMessage(value: unknown): TerminalStreamMessage | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-
-  try {
-    const parsed = JSON.parse(value) as Partial<TerminalStreamMessage>;
-    if (parsed.type === "output" && typeof parsed.data === "string") {
-      return { type: "output", data: parsed.data };
-    }
-    if (parsed.type === "error" && typeof parsed.message === "string") {
-      return { type: "error", message: parsed.message };
-    }
-  } catch {
-    return undefined;
-  }
-
-  return undefined;
-}
-
-function isTerminalStreamOpen(socket: WebSocket | undefined): socket is WebSocket {
-  return socket?.readyState === WebSocket.OPEN;
-}
-
-function sendTerminalResize(socket: WebSocket | undefined, columns: number, rows: number) {
-  sendTerminalCommand(socket, { type: "resize", columns, rows });
-}
-
-function sendTerminalCommand(socket: WebSocket | undefined, command: TerminalStreamCommand) {
-  if (isTerminalStreamOpen(socket)) {
-    socket.send(JSON.stringify(command));
-  }
-}
-
-function requestHeaders(hasBody: boolean) {
-  const headers: Record<string, string> = {};
-  if (hasBody) {
-    headers["Content-Type"] = "application/json";
-  }
-
-  const token = apiToken();
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
-
-  return Object.keys(headers).length ? headers : undefined;
-}
-
 async function resizeActivePane(
   paneId: string,
   columns: number,
@@ -1560,141 +1488,12 @@ async function resizeActivePane(
   }
 }
 
-function followTerminalOutput(
-  element: HTMLElement | null,
-  followRef: React.MutableRefObject<boolean>,
-) {
-  followRef.current = true;
-  scrollTerminalToBottom(element);
-}
-
-function scrollTerminalToBottomIfFollowing(element: HTMLElement, shouldFollow: boolean) {
-  if (shouldFollow) {
-    scrollTerminalToBottom(element);
-  }
-}
-
-function scrollTerminalToBottom(element: HTMLElement | null) {
-  if (!element) {
-    return;
-  }
-
-  const scroll = () => {
-    element.scrollTop = element.scrollHeight;
-  };
-
-  scroll();
-  requestAnimationFrame(scroll);
-  window.setTimeout(() => {
-    scroll();
-    requestAnimationFrame(scroll);
-  }, 0);
-}
-
-function isScrolledToBottom(element: HTMLElement) {
-  return element.scrollHeight - element.clientHeight - element.scrollTop <= 2;
-}
-
 function resetTerminalSnapshot(term: WTerm) {
   term.bridge?.init(term.cols, term.rows);
 }
 
-function waitForLayout() {
-  return new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-}
-
-function fitTerminalToContainer(
-  term: WTerm,
-  metricsRef?: React.MutableRefObject<TerminalCellMetrics | undefined>,
-) {
-  const fit = measureTerminalFit(term.element, metricsRef);
-  if (!fit) {
-    return;
-  }
-
-  if (fit.columns !== term.cols || fit.rows !== term.rows) {
-    term.resize(fit.columns, fit.rows);
-  }
-  // WTerm._lockHeight() sets an inline height that overrides our CSS
-  // height:100%. After resize, the inline height is stale (based on the
-  // old rows). Remove it so CSS height:100% takes effect and the element
-  // fills the parent container correctly.
-  term.element.style.height = "";
-}
-
-function measureTerminalFit(
-  element: HTMLElement,
-  metricsRef?: React.MutableRefObject<TerminalCellMetrics | undefined>,
-) {
-  // WTerm with autoResize:false sets its own height via _lockHeight(),
-  // which makes element.clientHeight reflect WTerm's desired viewport size
-  // rather than the available space in the container. Measure the parent
-  // instead so we resize to the actual available dimensions.
-  const container = element.parentElement ?? element;
-  const containerStyles = getComputedStyle(container);
-  const contentWidth =
-    container.clientWidth -
-    (Number.parseFloat(containerStyles.paddingLeft) || 0) -
-    (Number.parseFloat(containerStyles.paddingRight) || 0);
-  const contentHeight =
-    container.clientHeight -
-    (Number.parseFloat(containerStyles.paddingTop) || 0) -
-    (Number.parseFloat(containerStyles.paddingBottom) || 0);
-
-  const metrics = metricsRef?.current ?? measureTerminalCell(element);
-  if (metricsRef && !metricsRef.current) {
-    metricsRef.current = metrics;
-  }
-  const { cellWidth, rowHeight } = metrics;
-
-  if (contentWidth <= 0 || contentHeight <= 0 || cellWidth <= 0 || rowHeight <= 0) {
-    return undefined;
-  }
-
-  return {
-    columns: clamp(Math.floor(contentWidth / cellWidth), 20, 500),
-    rows: clamp(Math.floor(contentHeight / rowHeight), 5, 200),
-  };
-}
-
-function measureTerminalCell(element: HTMLElement): TerminalCellMetrics {
-  const probeRow = document.createElement("div");
-  probeRow.className = "term-row";
-  probeRow.style.position = "absolute";
-  probeRow.style.visibility = "hidden";
-  const probeCell = document.createElement("span");
-  probeCell.textContent = "W";
-  probeRow.appendChild(probeCell);
-  element.appendChild(probeRow);
-  const cellWidth = probeCell.getBoundingClientRect().width;
-  const rowHeight = probeRow.getBoundingClientRect().height;
-  probeRow.remove();
-
-  return { cellWidth, rowHeight };
-}
-
-function clamp(value: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, value));
-}
-
 function message(error: unknown) {
   return error instanceof Error ? error.message : String(error);
-}
-
-function normalizeAnsi(ansi: string) {
-  // tmux-captured output may use bare \n without \r, which confuses terminals
-  // that expect \r\n to move cursor to column 0 before advancing a row.
-  // However, some ANSI sequences already include \r (e.g. cursor positioning),
-  // so we only add \r before \n that are NOT preceded by \r.
-  let result = "";
-  for (let i = 0; i < ansi.length; i++) {
-    if (ansi[i] === "\n" && (i === 0 || ansi[i - 1] !== "\r")) {
-      result += "\r\n";
-    } else {
-      result += ansi[i];
-    }
-  }
-  return result;
 }
 
 function defaultSessionName() {
