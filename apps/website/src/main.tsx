@@ -1,6 +1,11 @@
 import "@wterm/dom/css";
 import { WTerm } from "@wterm/dom";
-import { Alert, Button, Card, Chip, Input, Spinner } from "@heroui/react";
+import { Alert } from "@heroui/react/alert";
+import { Button } from "@heroui/react/button";
+import { Card } from "@heroui/react/card";
+import { Chip } from "@heroui/react/chip";
+import { Input } from "@heroui/react/input";
+import { Spinner } from "@heroui/react/spinner";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { type TmuxPane, type TmuxSession, type TmuxSnapshot, type TmuxWindow } from "utils";
@@ -45,6 +50,11 @@ type TerminalStreamCommand =
   | { type: "input"; data: string }
   | { type: "resize"; columns: number; rows: number };
 
+type TerminalCellMetrics = {
+  cellWidth: number;
+  rowHeight: number;
+};
+
 const apiBase = import.meta.env.VITE_API_BASE ?? "";
 const configuredToken = import.meta.env.VITE_TMUAPP_TOKEN as string | undefined;
 const apiTokenStorageKey = "tmuapp.apiToken";
@@ -62,6 +72,11 @@ function App() {
   const [newSessionName, setNewSessionName] = useState(defaultSessionName);
   const [newSessionCwd, setNewSessionCwd] = useState("");
   const [showCreateSession, setShowCreateSession] = useState(false);
+  const [showTokenSettings, setShowTokenSettings] = useState(false);
+  const [tokenDraft, setTokenDraft] = useState(
+    () => localStorage.getItem(apiTokenStorageKey) ?? "",
+  );
+  const [pendingKillWindow, setPendingKillWindow] = useState<TmuxWindow>();
   const [previewRun, setPreviewRun] = useState(0);
   const [sessionPreviews, setSessionPreviews] = useState<Record<string, PreviewState>>({});
   const [fitSize, setFitSize] = useState("pending");
@@ -74,6 +89,7 @@ function App() {
   const streamedPane = useRef<string | undefined>(undefined);
   const resizeTimer = useRef<number | undefined>(undefined);
   const lastResize = useRef<string | undefined>(undefined);
+  const terminalCellMetrics = useRef<TerminalCellMetrics | undefined>(undefined);
 
   const sessions = snapshot?.sessions ?? [];
   const selectedSession = currentSession(snapshot, selection.session);
@@ -152,7 +168,7 @@ function App() {
 
       await terminalReady.current;
       await waitForLayout();
-      fitTerminalToContainer(terminal.current);
+      fitTerminalToContainer(terminal.current, terminalCellMetrics);
       setFitSize(`${terminal.current.cols}x${terminal.current.rows}`);
       scheduleResizeActivePane(terminal.current.cols, terminal.current.rows);
       return terminal.current;
@@ -462,25 +478,37 @@ function App() {
   }, [applySnapshot, newSessionCwd, newSessionName]);
 
   const killActiveWindow = useCallback(async () => {
-    if (!selection.window) {
+    const windowToKill = currentWindows(snapshot, selection.session).find(
+      (window) => window.id === selection.window,
+    );
+
+    if (!windowToKill) {
       setNotice({ tone: "warning", title: "No window selected" });
       return;
     }
-    if (!confirm(`Kill window ${selection.window}?`)) {
+
+    setPendingKillWindow(windowToKill);
+  }, [selection.session, selection.window, snapshot]);
+
+  const confirmKillWindow = useCallback(async () => {
+    if (!pendingKillWindow) {
       return;
     }
 
     setOperation("kill");
     try {
-      await request(`/api/windows/${encodeURIComponent(selection.window)}`, { method: "DELETE" });
-      setNotice({ tone: "success", title: "Window killed", body: selection.window });
+      await request(`/api/windows/${encodeURIComponent(pendingKillWindow.id)}`, {
+        method: "DELETE",
+      });
+      setNotice({ tone: "success", title: "Window killed", body: pendingKillWindow.name });
+      setPendingKillWindow(undefined);
       await refresh("background");
     } catch (error) {
       setNotice({ tone: "danger", title: "Unable to kill window", body: message(error) });
     } finally {
       setOperation(undefined);
     }
-  }, [refresh, selection.window]);
+  }, [pendingKillWindow, refresh]);
 
   const splitPane = useCallback(
     async (direction: "horizontal" | "vertical") => {
@@ -507,22 +535,22 @@ function App() {
   );
 
   const configureApiToken = useCallback(() => {
-    const current = localStorage.getItem(apiTokenStorageKey) ?? "";
-    const next = prompt("API token", current);
-    if (next === null) {
-      return;
-    }
+    setTokenDraft(localStorage.getItem(apiTokenStorageKey) ?? "");
+    setShowTokenSettings(true);
+  }, []);
 
-    if (next.trim()) {
-      localStorage.setItem(apiTokenStorageKey, next.trim());
-      setNotice({ tone: "success", title: "API token saved" });
+  const saveApiToken = useCallback(() => {
+    if (tokenDraft.trim()) {
+      localStorage.setItem(apiTokenStorageKey, tokenDraft.trim());
+      setNotice({ tone: "success", title: "API Token Saved" });
     } else {
       localStorage.removeItem(apiTokenStorageKey);
-      setNotice({ tone: "neutral", title: "API token cleared" });
+      setNotice({ tone: "neutral", title: "API Token Cleared" });
     }
 
+    setShowTokenSettings(false);
     void refresh("background");
-  }, [refresh]);
+  }, [refresh, tokenDraft]);
 
   const openSession = useCallback(
     (sessionId: string) => {
@@ -560,7 +588,7 @@ function App() {
   useEffect(() => {
     const fitTerminal = () => {
       if (terminal.current && selection.pane && view === "manage") {
-        fitTerminalToContainer(terminal.current);
+        fitTerminalToContainer(terminal.current, terminalCellMetrics);
         setFitSize(`${terminal.current.cols}x${terminal.current.rows}`);
         scheduleResizeActivePane(terminal.current.cols, terminal.current.rows);
       }
@@ -581,12 +609,13 @@ function App() {
 
     let cancelled = false;
     const run = previewRun;
-    const nextPreviews: Record<string, PreviewState> = {};
-
-    for (const session of snapshot.sessions) {
-      nextPreviews[session.id] = { text: "Loading preview...", status: "loading" };
-    }
-    setSessionPreviews((current) => ({ ...current, ...nextPreviews }));
+    setSessionPreviews((current) => {
+      const next = { ...current };
+      for (const session of snapshot.sessions) {
+        next[session.id] ??= { text: "Loading preview…", status: "loading" };
+      }
+      return next;
+    });
 
     void Promise.all(
       snapshot.sessions.map(async (session) => {
@@ -640,6 +669,9 @@ function App() {
 
   return (
     <div className="app-shell">
+      <a className="skip-link" href="#main-content">
+        Skip to Content
+      </a>
       <header className="topbar">
         <div className="brand" aria-label="tmuapp">
           <span className="brand-mark" aria-hidden="true">
@@ -659,7 +691,7 @@ function App() {
             onPress={() => void refresh("manual")}
             aria-label="Refresh sessions"
           >
-            {operation === "refresh" ? <Spinner size="sm" /> : "R"}
+            {operation === "refresh" ? <Spinner size="sm" aria-label="Refreshing sessions" /> : "R"}
           </Button>
           <Button className="ghost" type="button" onPress={configureApiToken}>
             Token
@@ -670,177 +702,207 @@ function App() {
             type="button"
             onPress={openCreateSession}
           >
-            {operation === "create" ? "Creating..." : "New session"}
+            {operation === "create" ? "Creating…" : "New Session"}
           </Button>
         </nav>
       </header>
 
-      <main className="workspace">
+      <main id="main-content" className="workspace">
         {notice ? <NoticeBanner notice={notice} onDismiss={() => setNotice(undefined)} /> : null}
-
-        <section
-          className={view === "overview" ? "overview" : "overview hidden"}
-          aria-label="Session overview"
-        >
-          <div className="overview-head">
-            <div>
-              <h2>Sessions</h2>
-              <p>
-                {sessions.length === 0
-                  ? "Create a tmux session and open it in the browser."
-                  : `${totalPanes} active panes across ${totalWindows} windows`}
-              </p>
-            </div>
-            <Chip className="count-pill">{sessions.length}</Chip>
-          </div>
-          {showCreateSession || sessions.length === 0 ? (
-            <SessionComposer
-              cwd={newSessionCwd}
-              isCreating={operation === "create"}
-              name={newSessionName}
-              onCancel={() => setShowCreateSession(false)}
-              onCwdChange={setNewSessionCwd}
-              onNameChange={setNewSessionName}
-              onSubmit={() => void createSession()}
-              showCancel={sessions.length > 0}
-            />
-          ) : null}
-          <SessionGrid
-            status={status}
-            sessions={sessions}
-            snapshot={snapshot}
-            selectedSession={selection.session}
-            previews={sessionPreviews}
-            onRetry={() => void refresh("manual")}
-            onCreate={openCreateSession}
-            onOpen={openSession}
+        {showTokenSettings ? (
+          <TokenPanel
+            token={tokenDraft}
+            onCancel={() => setShowTokenSettings(false)}
+            onSave={saveApiToken}
+            onTokenChange={setTokenDraft}
           />
-        </section>
+        ) : null}
+        {pendingKillWindow ? (
+          <ConfirmWindowKill
+            isDeleting={operation === "kill"}
+            window={pendingKillWindow}
+            onCancel={() => setPendingKillWindow(undefined)}
+            onConfirm={() => void confirmKillWindow()}
+          />
+        ) : null}
 
-        <section
-          className={view === "manage" ? "manager" : "manager hidden"}
-          aria-label="Session manager"
-        >
-          <div className="manager-header">
-            <Button className="ghost" type="button" onPress={showOverview}>
-              Back to sessions
-            </Button>
-            <div>
-              <strong>{selectedSession?.name ?? "No session selected"}</strong>
-              <span>
-                {selectedSession
-                  ? `${selectedSession.windows} windows ${selectedSession.attached ? "attached" : "detached"}`
-                  : "Select a session to inspect panes"}
-              </span>
+        {view === "overview" ? (
+          <section className="overview" aria-label="Session overview">
+            <div className="overview-head">
+              <div>
+                <h2>Sessions</h2>
+                <p>
+                  {sessions.length === 0
+                    ? "Create a tmux session and open it in the browser."
+                    : `${totalPanes} active panes across ${totalWindows} windows`}
+                </p>
+              </div>
+              <Chip className="count-pill">{sessions.length}</Chip>
             </div>
-          </div>
-
-          <div className="manager-grid">
-            <section className="main-pane">
-              <WindowStrip
-                windows={windows}
-                selectedWindow={selection.window}
-                onSelect={(windowId) => {
-                  const pane = activeOrFirstPane(snapshot, windowId)?.id;
-                  setSelection((current) => ({ ...current, window: windowId, pane }));
-                  setTerminalStatus("loading");
-                  void connectTerminalStream(pane);
-                }}
+            {showCreateSession || sessions.length === 0 ? (
+              <SessionComposer
+                cwd={newSessionCwd}
+                isCreating={operation === "create"}
+                name={newSessionName}
+                onCancel={() => setShowCreateSession(false)}
+                onCwdChange={setNewSessionCwd}
+                onNameChange={setNewSessionName}
+                onSubmit={() => void createSession()}
+                showCancel={sessions.length > 0}
               />
+            ) : null}
+            <SessionGrid
+              status={status}
+              sessions={sessions}
+              snapshot={snapshot}
+              selectedSession={selection.session}
+              previews={sessionPreviews}
+              onRetry={() => void refresh("manual")}
+              onCreate={openCreateSession}
+              onOpen={openSession}
+            />
+          </section>
+        ) : null}
 
-              <div className="terminal-shell">
-                <div className="terminal-toolbar">
-                  <div>
-                    <strong>
-                      {selectedPane?.title || selectedPane?.currentCommand || "No pane selected"}
-                    </strong>
-                    <span>
-                      {selectedPane
-                        ? `${selectedPane.id} ${selectedPane.width}x${selectedPane.height} ${selectedPane.currentPath}`
-                        : "Create a pane or choose another window"}
-                    </span>
-                  </div>
-                  <div className="terminal-actions">
-                    <Button
-                      className="ghost"
-                      type="button"
-                      onPress={() => void splitPane("horizontal")}
-                    >
-                      Split H
-                    </Button>
-                    <Button
-                      className="ghost"
-                      type="button"
-                      onPress={() => void splitPane("vertical")}
-                    >
-                      Split V
-                    </Button>
-                    <Button className="danger" type="button" onPress={killActiveWindow}>
-                      Kill window
-                    </Button>
-                  </div>
-                </div>
+        {view === "manage" ? (
+          <section className="manager" aria-label="Session manager">
+            <div className="manager-header">
+              <Button className="ghost" type="button" onPress={showOverview}>
+                Back to sessions
+              </Button>
+              <div>
+                <strong>{selectedSession?.name ?? "No session selected"}</strong>
+                <span>
+                  {selectedSession
+                    ? `${selectedSession.windows} windows ${selectedSession.attached ? "attached" : "detached"}`
+                    : "Select a session to inspect panes"}
+                </span>
+              </div>
+            </div>
 
-                <div className="terminal-wrap">
-                  {terminalStatus === "loading" ? (
-                    <InlineLoading label="Preparing terminal" />
-                  ) : null}
-                  <div
-                    ref={terminalElement}
-                    id="terminal"
-                    className="terminal"
-                    aria-label="tmux pane terminal"
-                  />
-                </div>
-
-                <form
-                  className="input-row"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    void sendInput(inputValue);
-                    setInputValue("");
+            <div className="manager-grid">
+              <section
+                className="main-pane"
+                role="tabpanel"
+                aria-labelledby={selection.window ? windowTabId(selection.window) : undefined}
+              >
+                <WindowStrip
+                  windows={windows}
+                  selectedWindow={selection.window}
+                  onSelect={(windowId) => {
+                    const pane = activeOrFirstPane(snapshot, windowId)?.id;
+                    setSelection((current) => ({ ...current, window: windowId, pane }));
+                    setTerminalStatus("loading");
+                    void connectTerminalStream(pane);
                   }}
-                >
-                  <Input
-                    className="pane-input"
-                    name="input"
-                    autoComplete="off"
-                    placeholder="Send literal input to selected pane"
-                    value={inputValue}
-                    onChange={(event) => setInputValue(event.target.value)}
-                  />
-                  <Button
-                    className="primary"
-                    type="submit"
-                    isDisabled={!selection.pane || inputValue.length === 0}
-                  >
-                    {operation === "input" ? "Sending..." : "Send"}
-                  </Button>
-                  <Button className="ghost" type="button" onPress={() => void sendKeys(["Enter"])}>
-                    Enter
-                  </Button>
-                </form>
-              </div>
-            </section>
+                />
 
-            <aside className="inspector" aria-label="Panes">
-              <div className="panel-heading">
-                <span>Panes</span>
-                <small>{panes.length}</small>
-              </div>
-              <PaneList
-                panes={panes}
-                selectedPane={selection.pane}
-                onSelect={(paneId) => {
-                  setSelection((current) => ({ ...current, pane: paneId }));
-                  setTerminalStatus("loading");
-                  void connectTerminalStream(paneId);
-                }}
-              />
-              <RendererMetrics fitSize={fitSize} />
-            </aside>
-          </div>
-        </section>
+                <div className="terminal-shell">
+                  <div className="terminal-toolbar">
+                    <div>
+                      <h2 className="terminal-heading">
+                        {selectedPane?.title || selectedPane?.currentCommand || "No pane selected"}
+                      </h2>
+                      <span>
+                        {selectedPane
+                          ? `${selectedPane.id} ${selectedPane.width}x${selectedPane.height} ${selectedPane.currentPath}`
+                          : "Create a pane or choose another window"}
+                      </span>
+                    </div>
+                    <div className="terminal-actions">
+                      <Button
+                        className="ghost"
+                        type="button"
+                        onPress={() => void splitPane("horizontal")}
+                        isDisabled={!selection.pane || operation === "split"}
+                      >
+                        Split H
+                      </Button>
+                      <Button
+                        className="ghost"
+                        type="button"
+                        onPress={() => void splitPane("vertical")}
+                        isDisabled={!selection.pane || operation === "split"}
+                      >
+                        Split V
+                      </Button>
+                      <Button
+                        className="danger"
+                        type="button"
+                        onPress={killActiveWindow}
+                        isDisabled={!selection.window || operation === "kill"}
+                      >
+                        Kill Window
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="terminal-wrap">
+                    {terminalStatus === "loading" ? (
+                      <InlineLoading label="Preparing terminal…" />
+                    ) : null}
+                    <div
+                      ref={terminalElement}
+                      id="terminal"
+                      className="terminal"
+                      aria-label="tmux pane terminal"
+                    />
+                  </div>
+
+                  <form
+                    className="input-row"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void sendInput(inputValue);
+                      setInputValue("");
+                    }}
+                  >
+                    <Input
+                      className="pane-input"
+                      name="pane-input"
+                      aria-label="Pane input"
+                      autoComplete="off"
+                      placeholder={'printf "hello"…'}
+                      value={inputValue}
+                      onChange={(event) => setInputValue(event.target.value)}
+                    />
+                    <Button
+                      className="primary"
+                      type="submit"
+                      isDisabled={!selection.pane || inputValue.length === 0}
+                    >
+                      {operation === "input" ? "Sending…" : "Send"}
+                    </Button>
+                    <Button
+                      className="ghost"
+                      type="button"
+                      onPress={() => void sendKeys(["Enter"])}
+                    >
+                      Enter
+                    </Button>
+                  </form>
+                </div>
+              </section>
+
+              <aside className="inspector" aria-label="Panes">
+                <div className="panel-heading">
+                  <span>Panes</span>
+                  <small>{panes.length}</small>
+                </div>
+                <PaneList
+                  panes={panes}
+                  selectedPane={selection.pane}
+                  onSelect={(paneId) => {
+                    setSelection((current) => ({ ...current, pane: paneId }));
+                    setTerminalStatus("loading");
+                    void connectTerminalStream(paneId);
+                  }}
+                />
+                <RendererMetrics fitSize={fitSize} />
+              </aside>
+            </div>
+          </section>
+        ) : null}
       </main>
     </div>
   );
@@ -857,7 +919,7 @@ function SessionGrid(props: {
   onOpen: (sessionId: string) => void;
 }) {
   if (props.status === "loading") {
-    return <InlineLoading label="Loading tmux sessions" />;
+    return <InlineLoading label="Loading tmux sessions…" />;
   }
 
   if (props.status === "error") {
@@ -889,7 +951,7 @@ function SessionGrid(props: {
         const panes = panesForSession(props.snapshot, session.id);
         const primaryPane = firstPaneForSession(props.snapshot, session.id);
         const preview = props.previews[session.id] ?? {
-          text: "Loading preview...",
+          text: "Loading preview…",
           status: "loading" as const,
         };
         const command = primaryPane?.currentCommand || primaryPane?.title || "idle";
@@ -901,6 +963,7 @@ function SessionGrid(props: {
             className={`session-card ${session.id === props.selectedSession ? "selected" : ""}`}
             data-session-card={session.id}
             type="button"
+            aria-label={`Open session ${session.name} with ${windows.length} windows and ${panes.length} panes`}
             onClick={() => props.onOpen(session.id)}
           >
             <span className="session-card-top">
@@ -951,7 +1014,8 @@ function SessionComposer(props: {
         name="session-name"
         aria-label="Session name"
         autoComplete="off"
-        placeholder="work"
+        placeholder="work…"
+        spellCheck={false}
         value={props.name}
         onChange={(event) => props.onNameChange(event.target.value)}
       />
@@ -960,7 +1024,8 @@ function SessionComposer(props: {
         name="session-cwd"
         aria-label="Working directory"
         autoComplete="off"
-        placeholder="optional working directory"
+        placeholder="/repo…"
+        spellCheck={false}
         value={props.cwd}
         onChange={(event) => props.onCwdChange(event.target.value)}
       />
@@ -975,7 +1040,7 @@ function SessionComposer(props: {
           type="submit"
           isDisabled={props.isCreating || !props.name.trim()}
         >
-          {props.isCreating ? "Creating..." : "Create"}
+          {props.isCreating ? "Creating…" : "Create"}
         </Button>
       </div>
     </form>
@@ -994,18 +1059,20 @@ function WindowStrip(props: {
   return (
     <div className="window-strip" role="tablist" aria-label="Windows">
       {props.windows.map((window) => (
-        <Button
+        <button
           key={window.id}
+          id={windowTabId(window.id)}
           className={`window-tab ${window.id === props.selectedWindow ? "selected" : ""}`}
+          role="tab"
           aria-selected={window.id === props.selectedWindow}
           type="button"
-          onPress={() => props.onSelect(window.id)}
+          onClick={() => props.onSelect(window.id)}
         >
           <span>
             {window.index}:{window.name}
           </span>
           <small>{window.panes}</small>
-        </Button>
+        </button>
       ))}
     </div>
   );
@@ -1067,9 +1134,108 @@ function RendererMetrics({ fitSize }: { fitSize: string }) {
 
 function InlineLoading({ label }: { label: string }) {
   return (
-    <div className="inline-loading" role="status">
-      <Spinner size="sm" />
+    <div className="inline-loading" role="status" aria-live="polite">
+      <Spinner size="sm" aria-hidden="true" />
       <span>{label}</span>
+    </div>
+  );
+}
+
+function TokenPanel(props: {
+  token: string;
+  onCancel: () => void;
+  onSave: () => void;
+  onTokenChange: (value: string) => void;
+}) {
+  const dialogRef = useFocusTrap<HTMLFormElement>();
+
+  return (
+    <div
+      className="floating-panel"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="token-title"
+      onClick={props.onCancel}
+      onKeyDown={(event) => handleDialogKeyDown(event, props.onCancel)}
+    >
+      <form
+        ref={dialogRef}
+        className="panel-card settings-panel"
+        onClick={(event) => event.stopPropagation()}
+        onSubmit={(event) => {
+          event.preventDefault();
+          props.onSave();
+        }}
+      >
+        <div>
+          <h2 id="token-title">API Token</h2>
+          <p>Requests use this token until it is cleared.</p>
+        </div>
+        <Input
+          name="api-token"
+          aria-label="Bearer token"
+          type="password"
+          autoComplete="off"
+          spellCheck={false}
+          placeholder="tmux-token…"
+          value={props.token}
+          onChange={(event) => props.onTokenChange(event.target.value)}
+        />
+        <div className="panel-actions">
+          <Button className="ghost" type="button" onPress={props.onCancel}>
+            Cancel
+          </Button>
+          <Button className="primary" type="submit">
+            Save Token
+          </Button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function ConfirmWindowKill(props: {
+  isDeleting: boolean;
+  window: TmuxWindow;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const dialogRef = useFocusTrap<HTMLDivElement>();
+
+  return (
+    <div
+      className="floating-panel"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="kill-title"
+      onClick={props.onCancel}
+      onKeyDown={(event) => handleDialogKeyDown(event, props.onCancel)}
+    >
+      <div
+        ref={dialogRef}
+        className="panel-card confirm-panel"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div>
+          <h2 id="kill-title">Kill Window</h2>
+          <p>
+            Window {props.window.index}:{props.window.name} and its panes will close immediately.
+          </p>
+        </div>
+        <div className="panel-actions">
+          <Button className="ghost" type="button" onPress={props.onCancel}>
+            Cancel
+          </Button>
+          <Button
+            className="danger"
+            type="button"
+            onPress={props.onConfirm}
+            isDisabled={props.isDeleting}
+          >
+            {props.isDeleting ? "Killing…" : "Kill Window"}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1099,6 +1265,8 @@ function NoticeBanner({ notice, onDismiss }: { notice: Notice; onDismiss: () => 
     <Alert
       className={`notice ${notice.tone}`}
       status={notice.tone === "danger" ? "danger" : "success"}
+      role="alert"
+      aria-live="assertive"
     >
       <Alert.Content>
         <Alert.Title>{notice.title}</Alert.Title>
@@ -1114,6 +1282,82 @@ function NoticeBanner({ notice, onDismiss }: { notice: Notice; onDismiss: () => 
       </Button>
     </Alert>
   );
+}
+
+function useFocusTrap<T extends HTMLElement>() {
+  const ref = useRef<T | null>(null);
+
+  useEffect(() => {
+    const panel = ref.current;
+    if (!panel) {
+      return;
+    }
+
+    const previousFocus =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusable = getFocusableElements(panel);
+    (focusable[0] ?? panel).focus();
+
+    return () => previousFocus?.focus();
+  }, []);
+
+  useEffect(() => {
+    const panel = ref.current;
+    if (!panel) {
+      return;
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") {
+        return;
+      }
+
+      const focusable = getFocusableElements(panel);
+      if (focusable.length === 0) {
+        event.preventDefault();
+        panel.focus();
+        return;
+      }
+
+      const first = focusable[0];
+      const last = focusable.at(-1);
+      if (!first || !last) {
+        return;
+      }
+
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    panel.addEventListener("keydown", onKeyDown);
+    return () => panel.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  return ref;
+}
+
+function getFocusableElements(container: HTMLElement) {
+  return Array.from(
+    container.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ),
+  ).filter((element) => !element.hasAttribute("disabled") && element.tabIndex !== -1);
+}
+
+function handleDialogKeyDown(event: React.KeyboardEvent, onCancel: () => void) {
+  if (event.key === "Escape") {
+    event.stopPropagation();
+    onCancel();
+  }
+}
+
+function windowTabId(windowId: string) {
+  return `window-tab-${windowId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 }
 
 function StatusChip({
@@ -1322,8 +1566,11 @@ function waitForLayout() {
   return new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 }
 
-function fitTerminalToContainer(term: WTerm) {
-  const fit = measureTerminalFit(term.element);
+function fitTerminalToContainer(
+  term: WTerm,
+  metricsRef?: React.MutableRefObject<TerminalCellMetrics | undefined>,
+) {
+  const fit = measureTerminalFit(term.element, metricsRef);
   if (!fit) {
     return;
   }
@@ -1333,7 +1580,10 @@ function fitTerminalToContainer(term: WTerm) {
   }
 }
 
-function measureTerminalFit(element: HTMLElement) {
+function measureTerminalFit(
+  element: HTMLElement,
+  metricsRef?: React.MutableRefObject<TerminalCellMetrics | undefined>,
+) {
   const styles = getComputedStyle(element);
   const contentWidth =
     element.clientWidth -
@@ -1344,6 +1594,23 @@ function measureTerminalFit(element: HTMLElement) {
     (Number.parseFloat(styles.paddingTop) || 0) -
     (Number.parseFloat(styles.paddingBottom) || 0);
 
+  const metrics = metricsRef?.current ?? measureTerminalCell(element);
+  if (metricsRef && !metricsRef.current) {
+    metricsRef.current = metrics;
+  }
+  const { cellWidth, rowHeight } = metrics;
+
+  if (contentWidth <= 0 || contentHeight <= 0 || cellWidth <= 0 || rowHeight <= 0) {
+    return undefined;
+  }
+
+  return {
+    columns: clamp(Math.floor(contentWidth / cellWidth), 20, 500),
+    rows: clamp(Math.floor(contentHeight / rowHeight), 5, 200),
+  };
+}
+
+function measureTerminalCell(element: HTMLElement): TerminalCellMetrics {
   const probeRow = document.createElement("div");
   probeRow.className = "term-row";
   probeRow.style.position = "absolute";
@@ -1356,14 +1623,7 @@ function measureTerminalFit(element: HTMLElement) {
   const rowHeight = probeRow.getBoundingClientRect().height;
   probeRow.remove();
 
-  if (contentWidth <= 0 || contentHeight <= 0 || cellWidth <= 0 || rowHeight <= 0) {
-    return undefined;
-  }
-
-  return {
-    columns: clamp(Math.floor(contentWidth / cellWidth), 20, 500),
-    rows: clamp(Math.floor(contentHeight / rowHeight), 5, 200),
-  };
+  return { cellWidth, rowHeight };
 }
 
 function clamp(value: number, min: number, max: number) {

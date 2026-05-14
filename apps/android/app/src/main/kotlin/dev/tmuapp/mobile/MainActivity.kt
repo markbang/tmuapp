@@ -51,17 +51,16 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import java.io.BufferedReader
-import java.io.InputStream
-import java.io.InputStreamReader
-import java.io.OutputStream
-import java.net.HttpURLConnection
-import java.net.URL
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import kotlin.system.exitProcess
 
 private val Canvas = Color(0xFF010102)
@@ -73,6 +72,12 @@ private val InkMuted = Color(0xFF8A8F98)
 private val Stroke = Color(0xFF2A2B30)
 private const val CrashPrefs = "tmuapp.crash"
 private const val LastCrash = "lastCrash"
+private val JsonMediaType = "application/json; charset=utf-8".toMediaType()
+private val HttpClient = OkHttpClient.Builder()
+    .connectTimeout(5, TimeUnit.SECONDS)
+    .readTimeout(5, TimeUnit.SECONDS)
+    .writeTimeout(5, TimeUnit.SECONDS)
+    .build()
 
 class MainActivity : ComponentActivity() {
     private val crashPrefs by lazy { getSharedPreferences(CrashPrefs, Context.MODE_PRIVATE) }
@@ -367,31 +372,18 @@ private suspend fun executeRequest(
     path: String,
     body: String?,
 ): String = withContext(Dispatchers.IO) {
-    val connection = (URL(apiBase + path).openConnection() as HttpURLConnection).apply {
-        requestMethod = method
-        connectTimeout = 5_000
-        readTimeout = 5_000
-        if (apiToken != null) {
-            setRequestProperty("Authorization", "Bearer $apiToken")
-        }
-        if (body != null) {
-            setRequestProperty("Content-Type", "application/json; charset=utf-8")
-            doOutput = true
-        }
-    }
-
-    try {
-        if (body != null) {
-            connection.outputStream.use { stream: OutputStream ->
-                stream.write(body.toByteArray(StandardCharsets.UTF_8))
+    val request = Request.Builder()
+        .url(apiBase + path)
+        .method(method, body?.toRequestBody(JsonMediaType))
+        .apply {
+            if (apiToken != null) {
+                header("Authorization", "Bearer $apiToken")
             }
         }
+        .build()
 
-        val code = connection.responseCode
-        val responseBody = readStream(if (code >= 400) connection.errorStream else connection.inputStream)
-        "HTTP $code\n$responseBody"
-    } finally {
-        connection.disconnect()
+    HttpClient.newCall(request).execute().use { response ->
+        "HTTP ${response.code}\n${response.body.string()}"
     }
 }
 
@@ -405,19 +397,3 @@ private fun jsonEscape(value: String): String =
         .replace("\n", "\\n")
         .replace("\r", "\\r")
         .replace("\t", "\\t")
-
-private fun readStream(stream: InputStream?): String {
-    if (stream == null) {
-        return ""
-    }
-
-    return BufferedReader(InputStreamReader(stream, StandardCharsets.UTF_8)).use { reader ->
-        buildString {
-            var line = reader.readLine()
-            while (line != null) {
-                append(line).append('\n')
-                line = reader.readLine()
-            }
-        }
-    }
-}

@@ -255,6 +255,67 @@ test("creates a session from the first-run form and opens the manager", async ({
   await expect(page.locator("#terminal")).toContainText("ready");
 });
 
+test("configures an API token without a blocking browser prompt", async ({ page }) => {
+  const sessionHeaders: Array<string | undefined> = [];
+
+  await page.route("**/api/sessions", async (route) => {
+    sessionHeaders.push(route.request().headers().authorization);
+    await route.fulfill({ json: snapshot });
+  });
+  await page.route("**/api/panes/*/capture?*", async (route) => {
+    await route.fulfill({
+      json: {
+        target: "%1",
+        ansi: "token ready",
+        lines: 8,
+        terminal: { rows: 34, columns: 120, cursorRow: 0, cursorColumn: 0 },
+      },
+    });
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Token" }).click();
+  await expect(page.getByRole("dialog", { name: "API Token" })).toBeVisible();
+
+  await page.getByLabel("Bearer token").fill("secret-token");
+  await page.getByRole("button", { name: "Save Token" }).click();
+
+  await expect(page.getByText("API Token Saved")).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "API Token" })).toHaveCount(0);
+  await expect.poll(() => sessionHeaders.filter(Boolean).at(-1)).toBe("Bearer secret-token");
+});
+
+test("confirms before killing a tmux window", async ({ page }) => {
+  let deleteCount = 0;
+
+  await mockTmuxApi(page, { inputPayloads: [], keyPayloads: [], resizePayloads: [] });
+  await page.route("**/api/windows/*", async (route) => {
+    if (route.request().method() === "DELETE") {
+      deleteCount += 1;
+    }
+    await route.fulfill({ json: { ok: true } });
+  });
+
+  await openSessionManager(page);
+  await page.getByRole("button", { name: "Kill Window" }).click();
+  await expect(page.getByRole("dialog", { name: "Kill Window" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByRole("dialog", { name: "Kill Window" })).toHaveCount(0);
+  expect(deleteCount).toBe(0);
+
+  await page.getByRole("button", { name: "Kill Window" }).click();
+  await page
+    .getByRole("dialog", { name: "Kill Window" })
+    .getByRole("button", {
+      name: "Kill Window",
+    })
+    .click();
+
+  await expect.poll(() => deleteCount).toBe(1);
+  await expect(page.getByText("Window killed")).toBeVisible();
+});
+
 test("falls back to pane metadata when session preview capture fails", async ({ page }) => {
   await page.route("**/api/sessions", async (route) => {
     await route.fulfill({ json: snapshot });
