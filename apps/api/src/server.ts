@@ -205,15 +205,10 @@ function attachPaneStream(socket: WebSocket, target: string, options: ApiServerO
           message.data ?? "",
         ]);
       } else if (message.type === "resize") {
-        runSocketCommand(socket, runCommand, [
-          "resize-pane",
-          "-t",
-          safeTarget,
-          "-x",
-          String(clampInteger(Number(message.columns), 20, 500)),
-          "-y",
-          String(clampInteger(Number(message.rows), 5, 200)),
-        ]);
+        const columns = clampInteger(Number(message.columns), 20, 500);
+        const rows = clampInteger(Number(message.rows), 5, 200);
+        stream.resizeClient(columns, rows);
+        resizeSocketPane(socket, runCommand, safeTarget, columns, rows);
       }
     } catch {
       sendSocket(socket, { type: "error", message: "Invalid stream message" });
@@ -229,6 +224,24 @@ function runSocketCommand(socket: WebSocket, runCommand: TmuxRunner, args: strin
     sendSocket(socket, {
       type: "error",
       message: error instanceof Error ? error.message : "tmux command failed",
+    });
+  });
+}
+
+function resizeSocketPane(
+  socket: WebSocket,
+  runCommand: TmuxRunner,
+  target: string,
+  columns: number,
+  rows: number,
+) {
+  void (async () => {
+    await runCommand(["resize-window", "-t", target, "-x", String(columns), "-y", String(rows)]);
+    await runCommand(["resize-pane", "-t", target, "-x", String(columns), "-y", String(rows)]);
+  })().catch((error: unknown) => {
+    sendSocket(socket, {
+      type: "error",
+      message: error instanceof Error ? error.message : "tmux resize failed",
     });
   });
 }

@@ -85,6 +85,8 @@ function App() {
   const terminal = useRef<WTerm | undefined>(undefined);
   const terminalReady = useRef<Promise<WTerm> | undefined>(undefined);
   const terminalDataHandler = useRef<(data: string) => void>(() => {});
+  const terminalShouldFollow = useRef(true);
+  const resizeScheduler = useRef<(columns: number, rows: number) => void>(() => {});
   const terminalStream = useRef<WebSocket | undefined>(undefined);
   const streamedPane = useRef<string | undefined>(undefined);
   const resizeTimer = useRef<number | undefined>(undefined);
@@ -118,34 +120,9 @@ function App() {
     [selection, view],
   );
 
-  const scheduleResizeActivePane = useCallback(
-    (columns: number, rows: number) => {
-      if (!selection.pane || view !== "manage") {
-        return;
-      }
-
-      const key = `${columns}x${rows}`;
-      if (lastResize.current === key) {
-        return;
-      }
-
-      if (resizeTimer.current) {
-        window.clearTimeout(resizeTimer.current);
-      }
-
-      const paneId = selection.pane;
-      resizeTimer.current = window.setTimeout(() => {
-        resizeTimer.current = undefined;
-        if (paneId) {
-          sendTerminalResize(terminalStream.current, columns, rows);
-          if (!isTerminalStreamOpen(terminalStream.current)) {
-            void resizeActivePane(paneId, columns, rows, setOperation, setFitSize);
-          }
-        }
-      }, 150);
-    },
-    [selection.pane, view],
-  );
+  const scheduleResizeActivePane = useCallback((columns: number, rows: number) => {
+    resizeScheduler.current(columns, rows);
+  }, []);
 
   const ensureTerminal = useCallback(
     async (columns = 120, rows = 34) => {
@@ -164,6 +141,9 @@ function App() {
           onResize: scheduleResizeActivePane,
         });
         terminalReady.current = terminal.current.init();
+        element.addEventListener("scroll", () => {
+          terminalShouldFollow.current = isScrolledToBottom(element);
+        });
       }
 
       await terminalReady.current;
@@ -183,8 +163,10 @@ function App() {
         return;
       }
 
+      const shouldFollow = terminalShouldFollow.current;
       resetTerminalSnapshot(term);
       term.write(capture.ansi.replaceAll("\n", "\r\n"));
+      scrollTerminalToBottomIfFollowing(term.element, shouldFollow);
     },
     [ensureTerminal],
   );
@@ -228,6 +210,41 @@ function App() {
     [renderTerminal, renderTerminalText, selection.pane, view],
   );
 
+  resizeScheduler.current = (columns: number, rows: number) => {
+    if (!selection.pane || view !== "manage") {
+      return;
+    }
+
+    const key = `${columns}x${rows}`;
+    if (lastResize.current === key) {
+      return;
+    }
+
+    if (resizeTimer.current) {
+      window.clearTimeout(resizeTimer.current);
+    }
+
+    const paneId = selection.pane;
+    const nextSelection = { ...selection, pane: paneId };
+    resizeTimer.current = window.setTimeout(() => {
+      resizeTimer.current = undefined;
+      lastResize.current = key;
+      sendTerminalResize(terminalStream.current, columns, rows);
+      void (async () => {
+        await resizeActivePane(paneId, columns, rows, setOperation, setFitSize);
+        try {
+          const nextSnapshot = await request<TmuxSnapshot>("/api/sessions");
+          applySnapshot(nextSnapshot, nextSelection);
+        } catch {
+          // Resize already succeeded; capture still gives the terminal the correct grid.
+        }
+        if (terminalShouldFollow.current) {
+          await refreshActivePane(paneId);
+        }
+      })();
+    }, 150);
+  };
+
   const connectTerminalStream = useCallback(
     async (paneId = selection.pane) => {
       if (view !== "manage") {
@@ -250,6 +267,7 @@ function App() {
 
       resetTerminalSnapshot(term);
       setTerminalStatus("loading");
+      void refreshActivePane(paneId);
 
       const socket = new WebSocket(streamUrl(`/api/panes/${encodeURIComponent(paneId)}/stream`));
       let receivedOutput = false;
@@ -279,7 +297,9 @@ function App() {
           receivedOutput = true;
           window.clearTimeout(fallbackTimer);
           setTerminalStatus("idle");
+          const shouldFollow = terminalShouldFollow.current;
           term.write(payload.data);
+          scrollTerminalToBottomIfFollowing(term.element, shouldFollow);
           return;
         }
 
@@ -368,6 +388,7 @@ function App() {
         return;
       }
 
+      followTerminalOutput(terminalElement.current, terminalShouldFollow);
       setOperation("input");
       try {
         await request(`/api/panes/${encodeURIComponent(selection.pane)}/keys`, {
@@ -392,6 +413,7 @@ function App() {
         return;
       }
 
+      followTerminalOutput(terminalElement.current, terminalShouldFollow);
       setOperation("input");
       try {
         await request(`/api/panes/${encodeURIComponent(selection.pane)}/input`, {
@@ -410,12 +432,25 @@ function App() {
     [refreshActivePane, selection.pane],
   );
 
+  const sendInputKey = useCallback(
+    async (key: string, draft = inputValue) => {
+      const value = draft;
+      if (value.length > 0) {
+        await sendInput(value);
+        setInputValue("");
+      }
+      await sendKeys([key]);
+    },
+    [inputValue, sendInput, sendKeys],
+  );
+
   const sendTerminalData = useCallback(
     async (data: string) => {
       if (!selection.pane || data.length === 0) {
         return;
       }
 
+      followTerminalOutput(terminalElement.current, terminalShouldFollow);
       const stream = terminalStream.current;
       if (isTerminalStreamOpen(stream)) {
         sendTerminalCommand(stream, { type: "input", data });
@@ -853,6 +888,7 @@ function App() {
                     className="input-row"
                     onSubmit={(event) => {
                       event.preventDefault();
+                      followTerminalOutput(terminalElement.current, terminalShouldFollow);
                       void sendInput(inputValue);
                       setInputValue("");
                     }}
@@ -865,6 +901,12 @@ function App() {
                       placeholder={'printf "hello"…'}
                       value={inputValue}
                       onChange={(event) => setInputValue(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Tab") {
+                          event.preventDefault();
+                          void sendInputKey("Tab", inputValue);
+                        }
+                      }}
                     />
                     <Button
                       className="primary"
@@ -1556,6 +1598,41 @@ async function resizeActivePane(
   } finally {
     setOperation(undefined);
   }
+}
+
+function followTerminalOutput(
+  element: HTMLElement | null,
+  followRef: React.MutableRefObject<boolean>,
+) {
+  followRef.current = true;
+  scrollTerminalToBottom(element);
+}
+
+function scrollTerminalToBottomIfFollowing(element: HTMLElement, shouldFollow: boolean) {
+  if (shouldFollow) {
+    scrollTerminalToBottom(element);
+  }
+}
+
+function scrollTerminalToBottom(element: HTMLElement | null) {
+  if (!element) {
+    return;
+  }
+
+  const scroll = () => {
+    element.scrollTop = element.scrollHeight;
+  };
+
+  scroll();
+  requestAnimationFrame(scroll);
+  window.setTimeout(() => {
+    scroll();
+    requestAnimationFrame(scroll);
+  }, 0);
+}
+
+function isScrolledToBottom(element: HTMLElement) {
+  return element.scrollHeight - element.clientHeight - element.scrollTop <= 2;
 }
 
 function resetTerminalSnapshot(term: WTerm) {

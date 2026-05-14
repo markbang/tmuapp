@@ -110,15 +110,9 @@ export function createTmuxService(run: TmuxRunner = runTmux) {
     async resizePane(target: string, width: number, height: number) {
       const columns = clampInteger(width, 20, 500);
       const rows = clampInteger(height, 5, 200);
-      await run([
-        "resize-pane",
-        "-t",
-        sanitizeTarget(target),
-        "-x",
-        String(columns),
-        "-y",
-        String(rows),
-      ]);
+      const safeTarget = sanitizeTarget(target);
+      await run(["resize-window", "-t", safeTarget, "-x", String(columns), "-y", String(rows)]);
+      await run(["resize-pane", "-t", safeTarget, "-x", String(columns), "-y", String(rows)]);
       return { ok: true, terminal: { columns, rows } };
     },
 

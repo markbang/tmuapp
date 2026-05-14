@@ -525,14 +525,25 @@ h1 {
   min-height: 0;
   overflow: hidden;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(240px, 320px);
+  grid-template-rows: minmax(0, 1fr) auto;
 }
 
 .inspector {
   min-width: 0;
-  overflow: auto;
-  border-left: 1px solid var(--hairline);
+  max-height: 88px;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: stretch;
+  border-top: 1px solid var(--hairline);
   background: var(--surface-1);
+}
+
+.inspector .panel-heading {
+  height: auto;
+  min-height: 0;
+  padding: 10px 14px;
+  border-bottom: 0;
 }
 
 .main-pane {
@@ -556,20 +567,22 @@ h1 {
 }
 
 .pane-list {
-  display: grid;
+  min-width: 0;
+  display: flex;
   gap: 6px;
-  padding: 10px;
+  overflow: auto hidden;
+  padding: 8px 10px;
 }
 
 .pane-item {
-  min-width: 0;
+  min-width: 220px;
   height: auto;
-  min-height: 54px;
+  min-height: 44px;
   display: grid;
   gap: 2px;
   justify-items: start;
   border-color: transparent;
-  padding: 10px;
+  padding: 7px 10px;
   text-align: left;
   background: transparent;
 }
@@ -714,28 +727,27 @@ h1 {
 }
 
 .metrics {
-  margin: 10px;
-  padding: 14px;
+  min-width: 260px;
+  margin: 8px 10px 8px 0;
+  padding: 8px 10px;
   border: 1px solid var(--hairline);
   border-radius: 8px;
   background: var(--surface-2);
 }
 
 .metrics h2 {
-  margin-bottom: 12px;
-  font-size: 14px;
-  letter-spacing: 0;
+  display: none;
 }
 
 .metrics dl {
   display: grid;
+  grid-template-columns: repeat(3, auto);
   gap: 10px;
 }
 
 .metrics div {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
+  display: grid;
+  gap: 2px;
 }
 
 .empty-line {
@@ -907,15 +919,22 @@ input:focus-visible,
   }
 
   .manager-grid {
-    grid-template-columns: 1fr;
     grid-template-rows: minmax(60svh, 1fr) auto;
   }
 
   .inspector {
     max-height: min(40svh, 320px);
+    grid-template-columns: 1fr;
     overflow-y: scroll;
-    border-left: 0;
-    border-top: 1px solid var(--hairline);
+  }
+
+  .metrics {
+    min-width: 0;
+    margin: 8px 10px;
+  }
+
+  .metrics dl {
+    grid-template-columns: 1fr;
   }
 
   .terminal-toolbar {

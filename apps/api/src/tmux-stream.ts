@@ -3,6 +3,7 @@ import { runTmux, type TmuxRunner } from "./tmux.js";
 
 export type TmuxStream = {
   close: () => void;
+  resizeClient: (columns: number, rows: number) => void;
 };
 
 export type TmuxStreamRunner = (args: string[]) => ChildProcessWithoutNullStreams;
@@ -58,6 +59,9 @@ export function createTmuxStream(
       }
       closed = true;
       closeControl(control);
+    },
+    resizeClient: (columns, rows) => {
+      writeControlCommand(control, closed, `refresh-client -C ${columns}x${rows}`);
     },
   };
 }
@@ -118,6 +122,16 @@ function decodeTmuxControlOutput(value: string) {
 
 function spawnTmuxStream(args: string[]) {
   return spawn("tmux", args, { stdio: ["pipe", "pipe", "pipe"] });
+}
+
+function writeControlCommand(
+  control: ChildProcessWithoutNullStreams,
+  closed: boolean,
+  command: string,
+) {
+  if (!closed && control.stdin.writable) {
+    control.stdin.write(`${command}\n`);
+  }
 }
 
 function closeControl(control: ChildProcessWithoutNullStreams) {

@@ -44,6 +44,79 @@ test("wterm renders tmux capture and sends terminal keyboard input", async ({ pa
   await expect.poll(() => resizePayloads.length).toBeGreaterThan(0);
 });
 
+test("resizes narrow tmux panes to fill the browser terminal", async ({ page }) => {
+  const resizePayloads: Array<{ width: number; height: number }> = [];
+  let paneSize = { width: 80, height: 24 };
+
+  await page.setViewportSize({ width: 1500, height: 820 });
+  await mockTmuxApi(
+    page,
+    { inputPayloads: [], keyPayloads: [], resizePayloads },
+    () => ({
+      target: "%1",
+      ansi:
+        "~/repo\r\n%0 " +
+        paneSize.width +
+        "x" +
+        paneSize.height +
+        " /home/bangwu/code/tmuapp/apps/api\r\nready",
+      lines: 240,
+      terminal: { rows: paneSize.height, columns: paneSize.width, cursorRow: 2, cursorColumn: 5 },
+    }),
+    () => paneSize,
+  );
+  await page.route("**/api/panes/*/resize", async (route) => {
+    const body = route.request().postDataJSON() as { width: number; height: number };
+    resizePayloads.push(body);
+    paneSize = { width: body.width, height: body.height };
+    await route.fulfill({
+      json: { ok: true, terminal: { columns: body.width, rows: body.height } },
+    });
+  });
+  await openSessionManager(page, "ready");
+
+  await expect.poll(() => resizePayloads.at(-1)?.width ?? 0).toBeGreaterThan(120);
+  await expect.poll(() => page.locator("#fit-size").textContent()).not.toContain("80x24");
+  await expect
+    .poll(() => page.getByRole("button", { name: /shell/ }).textContent())
+    .toContain(paneSize.width + "x" + paneSize.height);
+  await expect(page.locator("#terminal")).toContainText(
+    "%0 " + paneSize.width + "x" + paneSize.height + " /home/bangwu/code/tmuapp/apps/api",
+  );
+});
+
+test("terminal manager fills a wide browser viewport", async ({ page }) => {
+  const resizePayloads: Array<{ width: number; height: number }> = [];
+  let paneSize = { width: 80, height: 24 };
+
+  await page.setViewportSize({ width: 2560, height: 1440 });
+  await mockTmuxApi(
+    page,
+    { inputPayloads: [], keyPayloads: [], resizePayloads },
+    () => ({
+      target: "%1",
+      ansi: "ready wide terminal",
+      lines: 240,
+      terminal: { rows: paneSize.height, columns: paneSize.width, cursorRow: 0, cursorColumn: 0 },
+    }),
+    () => paneSize,
+  );
+  await page.route("**/api/panes/*/resize", async (route) => {
+    const body = route.request().postDataJSON() as { width: number; height: number };
+    resizePayloads.push(body);
+    paneSize = { width: body.width, height: body.height };
+    await route.fulfill({
+      json: { ok: true, terminal: { columns: body.width, rows: body.height } },
+    });
+  });
+
+  await openSessionManager(page, "ready wide terminal");
+
+  await expect(page.locator("#terminal")).toContainText("ready wide terminal");
+  await expect.poll(() => resizePayloads.at(-1)?.width ?? 0).toBeGreaterThan(250);
+  await expectTerminalFillsManager(page);
+});
+
 test("wterm resize updates the tmux pane dimensions", async ({ page }) => {
   const resizePayloads: Array<{ width: number; height: number }> = [];
 
@@ -162,6 +235,56 @@ test("wterm keeps scrollback stable while the user is scrolled away from the bot
 
   await expect.poll(() => terminalScrollMetrics(page)).toMatchObject({ top: 0 });
   expect(captureCount).toBe(capturesAfterUserScroll);
+});
+
+test("pane input follows new output and forwards completion tab", async ({ page }) => {
+  const inputPayloads: string[] = [];
+  const keyPayloads: string[][] = [];
+  const initialCapture = Array.from(
+    { length: 140 },
+    (_, index) => `history line ${String(index + 1).padStart(3, "0")}`,
+  ).join("\r\n");
+  const afterInputCapture = [
+    ...Array.from(
+      { length: 140 },
+      (_, index) => `history line ${String(index + 1).padStart(3, "0")}`,
+    ),
+    "ls",
+    "src",
+    "tests",
+    "prompt> ",
+  ].join("\r\n");
+
+  await page.setViewportSize({ width: 1280, height: 820 });
+  await mockTmuxApi(page, { inputPayloads, keyPayloads, resizePayloads: [] }, () => ({
+    target: "%1",
+    ansi: inputPayloads.length > 0 ? afterInputCapture : initialCapture,
+    lines: 240,
+    terminal: { rows: 34, columns: 120, cursorRow: 33, cursorColumn: 0 },
+  }));
+  await openSessionManager(page, "history line 140");
+
+  const terminal = page.locator("#terminal");
+  await expect.poll(() => terminalScrollMetrics(page)).toMatchObject({ canScroll: true });
+  await terminal.evaluate((element) => {
+    element.scrollTop = 0;
+    element.dispatchEvent(new Event("scroll"));
+  });
+  await expect.poll(() => terminalScrollMetrics(page)).toMatchObject({ top: 0 });
+
+  await page.getByLabel("Pane input").fill("ls");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  await expect.poll(() => inputPayloads.join("")).toContain("ls");
+  await expect(terminal).toContainText("prompt>");
+  await expect.poll(() => terminalScrollMetrics(page)).toMatchObject({ atBottom: true });
+
+  await page.getByLabel("Pane input").fill("ec");
+  await page.getByLabel("Pane input").press("Tab");
+
+  await expect.poll(() => inputPayloads.join("")).toContain("lsec");
+  await expect.poll(() => keyPayloads).toContainEqual(["Tab"]);
+  await expect(page.getByLabel("Pane input")).toHaveValue("");
 });
 
 test("wterm forwards raw keyboard and paste sequences", async ({ page, context, browserName }) => {
@@ -378,9 +501,22 @@ async function mockTmuxApi(
     lines: 240,
     terminal: { rows: 34, columns: 120, cursorRow: 1, cursorColumn: 8 },
   }),
+  paneSize: () => { width: number; height: number } = () => ({ width: 120, height: 34 }),
 ) {
   await page.route("**/api/sessions", async (route) => {
-    await route.fulfill({ json: snapshot });
+    const size = paneSize();
+    await route.fulfill({
+      json: {
+        ...snapshot,
+        panes: {
+          "@1": snapshot.panes["@1"].map((pane) => ({
+            ...pane,
+            width: size.width,
+            height: size.height,
+          })),
+        },
+      },
+    });
   });
 
   await page.route("**/api/panes/*/capture?*", async (route) => {
@@ -413,10 +549,17 @@ async function mockTmuxApi(
 }
 
 async function terminalScrollMetrics(page: Page) {
-  return page.locator("#terminal").evaluate((element) => ({
-    canScroll: element.scrollHeight > element.clientHeight,
-    top: Math.round(element.scrollTop),
-  }));
+  return page.locator("#terminal").evaluate((element) => {
+    const bottom = Math.round(element.scrollHeight - element.clientHeight);
+    const top = Math.round(element.scrollTop);
+
+    return {
+      atBottom: bottom - top <= 2,
+      bottom,
+      canScroll: element.scrollHeight > element.clientHeight,
+      top,
+    };
+  });
 }
 
 async function expectReasonableTerminalFit(page: Page) {
@@ -428,6 +571,51 @@ async function expectReasonableTerminalFit(page: Page) {
   expect(columns).toBeLessThan(260);
   expect(rows).toBeGreaterThan(8);
   expect(rows).toBeLessThan(80);
+}
+
+async function expectTerminalFillsManager(page: Page) {
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const rect = (selector: string) => {
+          const element = document.querySelector(selector);
+          const box = element?.getBoundingClientRect();
+          return box ? { left: box.left, right: box.right, width: box.width } : null;
+        };
+
+        return {
+          manager: rect(".manager-grid"),
+          mainPane: rect(".main-pane"),
+          terminalWrap: rect(".terminal-wrap"),
+          terminal: rect("#terminal"),
+          viewportWidth: window.innerWidth,
+        };
+      }),
+    )
+    .toMatchObject({
+      manager: { width: expect.any(Number) },
+      mainPane: { width: expect.any(Number) },
+      terminalWrap: { width: expect.any(Number) },
+      terminal: { width: expect.any(Number) },
+    });
+
+  const sizes = await page.evaluate(() => {
+    const width = (selector: string) =>
+      document.querySelector(selector)?.getBoundingClientRect().width ?? 0;
+
+    return {
+      manager: width(".manager-grid"),
+      mainPane: width(".main-pane"),
+      terminalWrap: width(".terminal-wrap"),
+      terminal: width("#terminal"),
+      viewport: window.innerWidth,
+    };
+  });
+
+  expect(sizes.manager).toBeGreaterThan(sizes.viewport - 2);
+  expect(sizes.mainPane).toBeGreaterThan(sizes.manager - 2);
+  expect(sizes.terminalWrap).toBeGreaterThan(sizes.mainPane - 2);
+  expect(sizes.terminal).toBeGreaterThan(sizes.terminalWrap - 2);
 }
 
 async function expectNoPageScrollbar(page: Page) {

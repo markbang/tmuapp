@@ -19,6 +19,7 @@ type FakeTmuxProcess = EventEmitter & {
     end: (data?: string) => void;
     write: (data: string) => boolean;
   };
+  stdinWrites: string[];
   stdout: EventEmitter & { setEncoding: (encoding: string) => void };
 };
 type FakeTmuxStream = ReturnType<typeof createFakeTmuxStream>;
@@ -187,9 +188,11 @@ describe("api server", () => {
     socket.send(JSON.stringify({ type: "resize", columns: 111, rows: 24 }));
 
     await expect.poll(() => tmuxArgs).toContainEqual(["send-keys", "-t", "%1", "-l", "whoami\r"]);
+    await expect.poll(() => tmuxStream?.stdinWrites).toContain("refresh-client -C 111x24\n");
     await expect
       .poll(() => tmuxArgs)
-      .toContainEqual(["resize-pane", "-t", "%1", "-x", "111", "-y", "24"]);
+      .toContainEqual(["resize-window", "-t", "%1", "-x", "111", "-y", "24"]);
+    expect(tmuxArgs).toContainEqual(["resize-pane", "-t", "%1", "-x", "111", "-y", "24"]);
 
     socket.close();
     await expect.poll(() => tmuxStream?.closed).toBe(true);
@@ -278,7 +281,11 @@ function createFakeTmuxStream() {
   stream.setEncoding = () => {};
   stderr.setEncoding = () => {};
   stdin.writable = true;
-  stdin.write = () => true;
+  const stdinWrites: string[] = [];
+  stdin.write = (data) => {
+    stdinWrites.push(data);
+    return true;
+  };
   stdin.end = () => {
     stdin.writable = false;
     process.closed = true;
@@ -303,6 +310,7 @@ function createFakeTmuxStream() {
     get closed() {
       return process.closed;
     },
+    stdinWrites,
     run: (args: string[]) => {
       process.args = args;
       return process as unknown as ChildProcessWithoutNullStreams;
