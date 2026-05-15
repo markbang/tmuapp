@@ -15,6 +15,7 @@ on:
       - "apps/api/**"
       - "apps/website/**"
       - "packages/**"
+      - "apps/android/app/build.gradle.kts"
   pull_request:
     paths:
       - ".github/workflows/web.yml"
@@ -28,6 +29,7 @@ on:
       - "apps/api/**"
       - "apps/website/**"
       - "packages/**"
+      - "apps/android/app/build.gradle.kts"
 
 jobs:
   web-api:
