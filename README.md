@@ -47,7 +47,7 @@ Open `http://localhost:8787`; the API serves the built web console and `/api/*` 
 Pull a release image:
 
 ```bash
-docker pull ghcr.io/markbang/tmuapp:0.1.0
+docker pull ghcr.io/markbang/tmuapp:0.1.1
 ```
 
 Run it with an isolated tmux server inside the container:
@@ -56,10 +56,10 @@ Run it with an isolated tmux server inside the container:
 docker run --rm \
   -p 8787:8787 \
   -e TMUAPP_TOKEN='change-this-token' \
-  ghcr.io/markbang/tmuapp:0.1.0
+  ghcr.io/markbang/tmuapp:0.1.1
 ```
 
-Use `latest`, `0.1.0`, or `v0.1.0` tags. On pushes to `main`, GitHub Actions publishes all three tags to GHCR.
+Use `latest`, `0.1.1`, or `v0.1.1` tags. On pushes to `main`, GitHub Actions publishes all three tags to GHCR.
 
 The image exposes `/health` and includes a Docker `HEALTHCHECK`. Keep tmuapp behind a trusted network, VPN, SSH tunnel, or reverse proxy. If it is reachable outside localhost, set `TMUAPP_TOKEN` and require HTTPS at the proxy.
 
@@ -92,13 +92,13 @@ Do not build the Android app locally for this delivery. GitHub Actions runs:
 gradle -p apps/android assembleRelease
 ```
 
-The workflow signs and verifies APKs before uploading the `tmuapp-release-apk` artifact. GitHub Release `v0.1.0` contains:
+The workflow signs and verifies APKs before uploading the `tmuapp-release-apk` artifact. GitHub Release `v0.1.1` contains:
 
-- `tmuapp-v0.1.0.apk`
-- `tmuapp-arm64-v8a-v0.1.0.apk`
-- `tmuapp-armeabi-v7a-v0.1.0.apk`
-- `tmuapp-x86-v0.1.0.apk`
-- `tmuapp-x86_64-v0.1.0.apk`
+- `tmuapp-v0.1.1.apk`
+- `tmuapp-arm64-v8a-v0.1.1.apk`
+- `tmuapp-armeabi-v7a-v0.1.1.apk`
+- `tmuapp-x86-v0.1.1.apk`
+- `tmuapp-x86_64-v0.1.1.apk`
 
 Push builds require these GitHub secrets:
 
@@ -178,5 +178,5 @@ curl -H 'Authorization: Bearer dev-token' http://localhost:8787/api/sessions
 GitHub Actions is the source of release artifacts:
 
 - Web/API build, lint, unit tests, and Playwright e2e must pass.
-- Docker image is pushed to GHCR as `latest`, `0.1.0`, and `v0.1.0`.
-- Android release APKs are signed, verified with `apksigner`, uploaded as workflow artifacts, and attached to GitHub Release `v0.1.0`.
+- Docker image is pushed to GHCR as `latest`, `0.1.1`, and `v0.1.1`.
+- Android release APKs are signed, verified with `apksigner`, uploaded as workflow artifacts, and attached to GitHub Release `v0.1.1`.
