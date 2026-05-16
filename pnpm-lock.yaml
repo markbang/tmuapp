@@ -39,6 +39,12 @@ catalogs:
     '@xterm/addon-search':
       specifier: ^0.15.0
       version: 0.15.0
+    '@xterm/addon-unicode11':
+      specifier: ^0.9.0
+      version: 0.9.0
+    '@xterm/addon-web-links':
+      specifier: ^0.12.0
+      version: 0.12.0
     '@xterm/addon-webgl':
       specifier: ^0.19.0
       version: 0.19.0
@@ -115,6 +121,12 @@ importers:
       '@xterm/addon-search':
         specifier: 'catalog:'
         version: 0.15.0(@xterm/xterm@6.0.0)
+      '@xterm/addon-unicode11':
+        specifier: 'catalog:'
+        version: 0.9.0
+      '@xterm/addon-web-links':
+        specifier: 'catalog:'
+        version: 0.12.0
       '@xterm/addon-webgl':
         specifier: 'catalog:'
         version: 0.19.0
@@ -1052,6 +1064,12 @@ packages:
     resolution: {integrity: sha512-ZBZKLQ+EuKE83CqCmSSz5y1tx+aNOCUaA7dm6emgOX+8J9H1FWXZyrKfzjwzV+V14TV3xToz1goIeRhXBS5qjg==}
     peerDependencies:
       '@xterm/xterm': ^5.0.0
+
+  '@xterm/addon-unicode11@0.9.0':
+    resolution: {integrity: sha512-FxDnYcyuXhNl+XSqGZL/t0U9eiNb/q3EWT5rYkQT/zuig8Gz/VagnQANKHdDWFM2lTMk9ly0EFQxxxtZUoRetw==}
+
+  '@xterm/addon-web-links@0.12.0':
+    resolution: {integrity: sha512-4Smom3RPyVp7ZMYOYDoC/9eGJJJqYhnPLGGqJ6wOBfB8VxPViJNSKdgRYb8NpaM6YSelEKbA2SStD7lGyqaobw==}
 
   '@xterm/addon-webgl@0.19.0':
     resolution: {integrity: sha512-b3fMOsyLVuCeNJWxolACEUED0vm7qC0cy4wRvf3oURSzDTYVQiGPhTnhWZwIHdvC48Y+oLhvYXnY4XDXPoJo6A==}
@@ -2252,6 +2270,10 @@ snapshots:
   '@xterm/addon-search@0.15.0(@xterm/xterm@6.0.0)':
     dependencies:
       '@xterm/xterm': 6.0.0
+
+  '@xterm/addon-unicode11@0.9.0': {}
+
+  '@xterm/addon-web-links@0.12.0': {}
 
   '@xterm/addon-webgl@0.19.0': {}
 

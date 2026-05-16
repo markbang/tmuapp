@@ -2,6 +2,8 @@ import { Terminal } from "@xterm/xterm";
 import { ImageAddon } from "@xterm/addon-image";
 import { LigaturesAddon } from "@xterm/addon-ligatures";
 import { SearchAddon } from "@xterm/addon-search";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 
 export interface TermAdapter {
@@ -150,6 +152,22 @@ export function createTerminal(element: HTMLElement, options: TermAdapterOptions
         term.loadAddon(searchAddon);
       } catch {
         // Search unavailable — non-critical.
+      }
+
+      try {
+        term.loadAddon(new Unicode11Addon());
+      } catch {
+        // Unicode 11 unavailable — non-critical.
+      }
+
+      try {
+        term.loadAddon(
+          new WebLinksAddon((_event, uri) => {
+            window.open(uri, "_blank", "noopener");
+          }),
+        );
+      } catch {
+        // Web links unavailable — non-critical.
       }
 
       term.open(element);
