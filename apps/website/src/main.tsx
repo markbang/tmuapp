@@ -1,7 +1,6 @@
 import "@xterm/xterm/css/xterm.css";
 import { Button } from "@heroui/react/button";
-import { Spinner } from "@heroui/react/spinner";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { TmuxPane, TmuxSnapshot } from "utils";
 import "./style.css";
@@ -30,7 +29,6 @@ import {
   scrollTerminalToBottomIfFollowing,
 } from "./terminal/terminal-scroll";
 import {
-  activeOrFirstPane,
   currentSession,
   defaultSessionName,
   firstPaneForSession,
@@ -69,10 +67,6 @@ function App() {
 
   const sessions = snapshot?.sessions ?? [];
   const selectedSession = currentSession(snapshot, selection.session);
-  const selectedPane = useMemo(
-    () => findPane(snapshot, selection.pane),
-    [selection.pane, snapshot],
-  );
 
   const applySnapshot = useCallback(
     (nextSnapshot: TmuxSnapshot, preferred: Selection = selection) => {
@@ -405,13 +399,6 @@ function App() {
   const showOverview = useCallback(() => {
     setView("overview");
     setPreviewRun((run) => run + 1);
-  }, []);
-
-  const configureApiToken = useCallback(() => {
-    import("./api/client").then(({ apiTokenStorageKey }) => {
-      setTokenDraft(localStorage.getItem(apiTokenStorageKey) ?? "");
-      setShowTokenSettings(true);
-    });
   }, []);
 
   const saveApiToken = useCallback(() => {
