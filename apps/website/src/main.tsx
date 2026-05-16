@@ -83,7 +83,11 @@ function App() {
   const lastResize = useRef<string | undefined>(undefined);
   const terminalCellMetrics = useRef<TerminalCellMetrics | undefined>(undefined);
   const [showSearch, setShowSearch] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchCaseSensitive, setSearchCaseSensitive] = useState(false);
+  const [searchWholeWord, setSearchWholeWord] = useState(false);
+  const [searchRegex, setSearchRegex] = useState(false);
   const [fontSize, setFontSizeState] = useState(() => {
     const stored = localStorage.getItem("tmuapp.fontSize");
     return stored ? Number(stored) : 14;
@@ -689,6 +693,12 @@ function App() {
     if (view !== "manage") return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Close context menu on Escape
+      if (e.key === "Escape" && contextMenu) {
+        setContextMenu(null);
+        return;
+      }
+
       // Only activate when the terminal area has focus, not when the
       // input row or any form control is focused.
       const active = document.activeElement;
@@ -824,7 +834,7 @@ function App() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [view, windows, panes, selection, snapshot, connectTerminalStream]);
+  }, [view, windows, panes, selection, snapshot, connectTerminalStream, contextMenu]);
 
   // Auto-focus the search input when the search bar opens.
   useEffect(() => {
@@ -1121,27 +1131,21 @@ function App() {
                 </div>
 
                 {showSearch ? (
-                  <form
-                    className="terminal-search"
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      const addon = terminal.current?.searchAddon;
-                      if (addon && searchQuery) {
-                        addon.findNext(searchQuery);
-                      }
-                    }}
-                  >
+                  <div className="terminal-search">
                     <input
                       ref={searchInputRef}
-                      className="terminal-search-input"
                       type="text"
-                      placeholder="Find…"
+                      placeholder="Find"
                       value={searchQuery}
                       onChange={(e) => {
-                        setSearchQuery(e.target.value);
-                        const addon = terminal.current?.searchAddon;
-                        if (addon && e.target.value) {
-                          addon.findNext(e.target.value);
+                        const q = e.target.value;
+                        setSearchQuery(q);
+                        if (terminal.current?.searchAddon && q) {
+                          terminal.current.searchAddon.findNext(q, {
+                            caseSensitive: searchCaseSensitive,
+                            wholeWord: searchWholeWord,
+                            regex: searchRegex,
+                          });
                         }
                       }}
                       onKeyDown={(e) => {
@@ -1152,49 +1156,102 @@ function App() {
                         }
                         if (e.key === "Enter") {
                           e.preventDefault();
+                          const addon = terminal.current?.searchAddon;
+                          if (!addon || !searchQuery) return;
                           if (e.shiftKey) {
-                            terminal.current?.searchAddon?.findPrevious(searchQuery);
+                            addon.findPrevious(searchQuery, {
+                              caseSensitive: searchCaseSensitive,
+                              wholeWord: searchWholeWord,
+                              regex: searchRegex,
+                            });
                           } else {
-                            terminal.current?.searchAddon?.findNext(searchQuery);
+                            addon.findNext(searchQuery, {
+                              caseSensitive: searchCaseSensitive,
+                              wholeWord: searchWholeWord,
+                              regex: searchRegex,
+                            });
                           }
                         }
                       }}
                     />
-                    <Button
-                      className="ghost search-btn"
+                    <button
+                      className="search-btn"
                       type="button"
                       aria-label="Previous match"
-                      onPress={() => terminal.current?.searchAddon?.findPrevious(searchQuery)}
+                      onClick={() =>
+                        terminal.current?.searchAddon?.findPrevious(searchQuery, {
+                          caseSensitive: searchCaseSensitive,
+                          wholeWord: searchWholeWord,
+                          regex: searchRegex,
+                        })
+                      }
                     >
                       ↑
-                    </Button>
-                    <Button
-                      className="ghost search-btn"
+                    </button>
+                    <button
+                      className="search-btn"
                       type="button"
                       aria-label="Next match"
-                      onPress={() => terminal.current?.searchAddon?.findNext(searchQuery)}
+                      onClick={() =>
+                        terminal.current?.searchAddon?.findNext(searchQuery, {
+                          caseSensitive: searchCaseSensitive,
+                          wholeWord: searchWholeWord,
+                          regex: searchRegex,
+                        })
+                      }
                     >
                       ↓
-                    </Button>
-                    <Button
-                      className="ghost search-btn"
+                    </button>
+                    <button
+                      className={`search-btn${searchCaseSensitive ? " active" : ""}`}
+                      type="button"
+                      aria-label="Match case"
+                      title="Match Case"
+                      onClick={() => setSearchCaseSensitive(!searchCaseSensitive)}
+                    >
+                      Aa
+                    </button>
+                    <button
+                      className={`search-btn${searchWholeWord ? " active" : ""}`}
+                      type="button"
+                      aria-label="Match whole word"
+                      title="Match Whole Word"
+                      onClick={() => setSearchWholeWord(!searchWholeWord)}
+                    >
+                      Ab
+                    </button>
+                    <button
+                      className={`search-btn${searchRegex ? " active" : ""}`}
+                      type="button"
+                      aria-label="Use regular expression"
+                      title="Use Regular Expression"
+                      onClick={() => setSearchRegex(!searchRegex)}
+                    >
+                      .*
+                    </button>
+                    <button
+                      className="search-btn close-btn"
                       type="button"
                       aria-label="Close search"
-                      onPress={() => {
+                      onClick={() => {
                         setShowSearch(false);
                         setSearchQuery("");
                         terminal.current?.focus();
                       }}
                     >
                       ✕
-                    </Button>
-                  </form>
+                    </button>
+                  </div>
                 ) : null}
 
                 <div
                   className={`terminal-wrap${terminalStatus === "loading" ? " switching" : ""}`}
                   id="terminal-panel"
                   role="tabpanel"
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    setContextMenu({ x: e.clientX, y: e.clientY });
+                  }}
                 >
                   {terminalStatus === "loading" ? (
                     <InlineLoading label="Preparing terminal…" />
@@ -1206,6 +1263,54 @@ function App() {
                     aria-label="tmux pane terminal"
                   />
                 </div>
+
+                {contextMenu ? (
+                  <div
+                    className="terminal-context-menu"
+                    style={{ left: contextMenu.x, top: contextMenu.y }}
+                    onClick={() => setContextMenu(null)}
+                    role="menu"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        const selection =
+                          (terminal.current?.element as any)?._xtermInstance?.getSelection?.() ??
+                          "";
+                        if (selection) void navigator.clipboard.writeText(selection);
+                        setContextMenu(null);
+                      }}
+                    >
+                      Copy
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          const text = await navigator.clipboard.readText();
+                          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                          (terminal.current?.element as any)?._xtermInstance?.paste(text);
+                        } catch {
+                          // clipboard read denied — silently ignore
+                        }
+                        setContextMenu(null);
+                      }}
+                    >
+                      Paste
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        (terminal.current?.element as any)?._xtermInstance?.selectAll();
+                        setContextMenu(null);
+                      }}
+                    >
+                      Select All
+                    </button>
+                  </div>
+                ) : null}
 
                 <form
                   className="input-row"

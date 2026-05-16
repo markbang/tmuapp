@@ -173,35 +173,59 @@
 .terminal-search {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 14px;
+  gap: 4px;
+  padding: 4px 10px;
   border-bottom: 1px solid var(--hairline);
   background: var(--surface-2);
 }
 
-.terminal-search-input {
+.terminal-search input {
   flex: 1 1 0;
   min-width: 0;
-  height: 32px;
+  max-width: 260px;
+  height: 26px;
   border: 1px solid var(--hairline);
-  border-radius: 6px;
-  padding: 0 10px;
+  border-radius: 4px;
+  padding: 0 8px;
   color: var(--ink);
   background: var(--surface-3);
-  font-size: 13px;
+  font: 13px var(--font);
   outline: none;
 }
 
-.terminal-search-input:focus {
+.terminal-search input:focus {
   border-color: var(--primary-focus-border);
-  box-shadow: 0 0 0 2px var(--primary-focus-shadow);
+  box-shadow: 0 0 0 1px var(--primary-focus-shadow);
 }
 
-.search-btn {
-  min-height: 30px !important;
-  min-width: 32px !important;
-  padding: 0 8px !important;
-  font-size: 13px;
+.terminal-search .search-btn {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--ink-muted);
+  background: transparent;
+  cursor: pointer;
+  font: 12px var(--font);
+  padding: 0;
+  min-height: unset;
+}
+
+.terminal-search .search-btn:hover {
+  background: var(--surface-3);
+  color: var(--ink);
+}
+
+.terminal-search .search-btn.active {
+  border-color: var(--primary-subtle-border);
+  background: var(--primary-subtle-bg);
+  color: var(--primary);
+}
+
+.terminal-search .search-btn.close-btn {
+  margin-left: 4px;
 }
 
 /* Activity dot on window tabs */
@@ -396,4 +420,51 @@ input:focus-visible,
 
 [data-disabled="true"] * {
   color: inherit;
+}
+
+/* VS Code-style terminal context menu */
+.terminal-context-menu {
+  position: fixed;
+  z-index: 50;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 6px;
+  padding: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 140px;
+}
+
+.terminal-context-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 14px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink);
+  font: 13px var(--font);
+  cursor: pointer;
+}
+
+.terminal-context-menu button:hover {
+  background: var(--primary-subtle-bg);
+}
+
+/* VS Code-style focus indicator */
+.terminal-wrap:has(.xterm.focus) {
+  border: 1px solid var(--primary-focus-border);
+  box-shadow: 0 0 0 1px var(--primary-focus-shadow);
+}
+
+.terminal .xterm.focus {
+  outline: none;
+}
+
+/* VS Code-style selection highlight */
+.terminal .xterm .xterm-selection {
+  background: rgba(94, 106, 210, 0.35) !important;
 }
