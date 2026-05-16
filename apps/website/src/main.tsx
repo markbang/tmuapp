@@ -694,6 +694,19 @@ function App() {
     return () => terminalStream.current?.close();
   }, []);
 
+  // Dismiss context menu on any click outside the menu.
+  useEffect(() => {
+    if (!contextMenu) return;
+    const handleMouseDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && !target.closest(".terminal-context-menu")) {
+        setContextMenu(null);
+      }
+    };
+    document.addEventListener("mousedown", handleMouseDown, true);
+    return () => document.removeEventListener("mousedown", handleMouseDown, true);
+  }, [contextMenu]);
+
   // Keyboard shortcuts for window/pane switching when the terminal is focused.
   useEffect(() => {
     if (view !== "manage") return;
@@ -771,9 +784,9 @@ function App() {
         }
       }
 
-      // Ctrl+L: focus the pane input line (standard terminal clear-screen
-      // shortcut repurposed as focus command when the terminal is active).
-      if (e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && e.key === "l") {
+      // Ctrl+K: focus the pane input line (avoiding conflict with
+      // Ctrl+L which terminals use for clear-screen / redraw).
+      if (e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && e.key === "k") {
         e.preventDefault();
         const input = document.querySelector<HTMLInputElement>('input[name="pane-input"]');
         if (input) {
@@ -1183,7 +1196,7 @@ function App() {
                     />
                     {searchMatchCount > 0 ? (
                       <span className="search-match-count">
-                        {searchMatchIndex}/{searchMatchCount}
+                        {searchMatchIndex + 1} of {searchMatchCount}
                       </span>
                     ) : null}
                     <button
@@ -1219,7 +1232,14 @@ function App() {
                       type="button"
                       aria-label="Match case"
                       title="Match Case"
-                      onClick={() => setSearchCaseSensitive(!searchCaseSensitive)}
+                      onClick={() => {
+                        setSearchCaseSensitive(!searchCaseSensitive);
+                        terminal.current?.searchAddon?.findNext(searchQuery, {
+                          caseSensitive: !searchCaseSensitive,
+                          wholeWord: searchWholeWord,
+                          regex: searchRegex,
+                        });
+                      }}
                     >
                       Aa
                     </button>
@@ -1228,7 +1248,14 @@ function App() {
                       type="button"
                       aria-label="Match whole word"
                       title="Match Whole Word"
-                      onClick={() => setSearchWholeWord(!searchWholeWord)}
+                      onClick={() => {
+                        setSearchWholeWord(!searchWholeWord);
+                        terminal.current?.searchAddon?.findNext(searchQuery, {
+                          caseSensitive: searchCaseSensitive,
+                          wholeWord: !searchWholeWord,
+                          regex: searchRegex,
+                        });
+                      }}
                     >
                       Ab
                     </button>
@@ -1237,7 +1264,14 @@ function App() {
                       type="button"
                       aria-label="Use regular expression"
                       title="Use Regular Expression"
-                      onClick={() => setSearchRegex(!searchRegex)}
+                      onClick={() => {
+                        setSearchRegex(!searchRegex);
+                        terminal.current?.searchAddon?.findNext(searchQuery, {
+                          caseSensitive: searchCaseSensitive,
+                          wholeWord: searchWholeWord,
+                          regex: !searchRegex,
+                        });
+                      }}
                     >
                       .*
                     </button>

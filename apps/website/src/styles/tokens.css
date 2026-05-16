@@ -52,7 +52,7 @@
   background: var(--canvas);
   font: 14px/1.5 var(--font);
   font-synthesis: none;
-  text-rendering: optimizeSpeed;
+  text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   color-scheme: dark;

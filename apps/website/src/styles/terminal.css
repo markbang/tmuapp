@@ -108,7 +108,12 @@
   background: transparent !important;
 }
 
-/* VS Code-style scrollbar */
+/* VS Code-style scrollbar — WebKit (Chrome/Safari/Edge) */
+.terminal .xterm .xterm-viewport {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+}
+
 .terminal .xterm .xterm-viewport::-webkit-scrollbar {
   width: 10px;
 }
