@@ -92,7 +92,7 @@
   height: 100%;
   min-height: 0;
   border-radius: 0;
-  padding: 8px 10px;
+  padding: 6px 0 6px 10px;
   box-shadow: none;
 }
 
@@ -106,6 +106,26 @@
   scroll-behavior: smooth;
   overscroll-behavior: contain;
   background: transparent !important;
+}
+
+/* VS Code-style scrollbar */
+.terminal .xterm .xterm-viewport::-webkit-scrollbar {
+  width: 10px;
+}
+.terminal .xterm .xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+.terminal .xterm .xterm-viewport::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.terminal .xterm .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+.terminal .xterm .xterm-viewport::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 /* xterm.js text selection — lavender accent */
@@ -226,6 +246,14 @@
 
 .terminal-search .search-btn.close-btn {
   margin-left: 4px;
+}
+
+.terminal-search .search-match-count {
+  font: 12px var(--mono);
+  color: var(--ink-muted);
+  white-space: nowrap;
+  min-width: 52px;
+  text-align: center;
 }
 
 /* Activity dot on window tabs */
@@ -433,12 +461,14 @@ input:focus-visible,
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  min-width: 140px;
+  gap: 0;
+  min-width: 190px;
 }
 
 .terminal-context-menu button {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   width: 100%;
   text-align: left;
   padding: 6px 14px;
@@ -448,16 +478,37 @@ input:focus-visible,
   color: var(--ink);
   font: 13px var(--font);
   cursor: pointer;
+  gap: 24px;
 }
 
 .terminal-context-menu button:hover {
   background: var(--primary-subtle-bg);
 }
 
+.terminal-context-menu button:disabled {
+  color: var(--ink-tertiary);
+  cursor: default;
+}
+
+.terminal-context-menu button:disabled:hover {
+  background: transparent;
+}
+
+.terminal-context-menu .context-menu-shortcut {
+  color: var(--ink-tertiary);
+  font-size: 12px;
+}
+
+.terminal-context-menu .context-menu-separator {
+  height: 1px;
+  background: var(--hairline);
+  margin: 3px 8px;
+}
+
 /* VS Code-style focus indicator */
 .terminal-wrap:has(.xterm.focus) {
   border: 1px solid var(--primary-focus-border);
-  box-shadow: 0 0 0 1px var(--primary-focus-shadow);
+  box-shadow: 0 0 0 2px var(--primary-focus-shadow);
 }
 
 .terminal .xterm.focus {

@@ -27,6 +27,7 @@ export interface TermAdapterOptions {
   cursorBlink?: boolean;
   onData?: (data: string) => void;
   onResize?: (cols: number, rows: number) => void;
+  onSearchResults?: (index: number, count: number) => void;
 }
 
 const defaultFontStack =
@@ -150,6 +151,11 @@ export function createTerminal(element: HTMLElement, options: TermAdapterOptions
       try {
         searchAddon = new SearchAddon();
         term.loadAddon(searchAddon);
+        if (options.onSearchResults) {
+          searchAddon.onDidChangeResults(({ resultIndex, resultCount }) => {
+            options.onSearchResults?.(resultIndex ?? 0, resultCount ?? 0);
+          });
+        }
       } catch {
         // Search unavailable — non-critical.
       }

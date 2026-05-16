@@ -1280,11 +1280,19 @@ function App() {
                   <div
                     className="terminal-context-menu"
                     style={{ left: contextMenu.x, top: contextMenu.y }}
-                    onClick={() => setContextMenu(null)}
                     role="menu"
+                    onClick={(e) => {
+                      // Let button clicks through but close on menu background click
+                      if (e.target === e.currentTarget) setContextMenu(null);
+                    }}
+                    onWheel={() => setContextMenu(null)}
                   >
                     <button
                       type="button"
+                      disabled={
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        !(terminal.current?.element as any)?._xtermInstance?.getSelection?.()
+                      }
                       onClick={() => {
                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
                         const selection =
@@ -1294,7 +1302,8 @@ function App() {
                         setContextMenu(null);
                       }}
                     >
-                      Copy
+                      <span>Copy</span>
+                      <span className="context-menu-shortcut">⌘C</span>
                     </button>
                     <button
                       type="button"
@@ -1309,8 +1318,10 @@ function App() {
                         setContextMenu(null);
                       }}
                     >
-                      Paste
+                      <span>Paste</span>
+                      <span className="context-menu-shortcut">⌘V</span>
                     </button>
+                    <div className="context-menu-separator" />
                     <button
                       type="button"
                       onClick={() => {
@@ -1319,7 +1330,8 @@ function App() {
                         setContextMenu(null);
                       }}
                     >
-                      Select All
+                      <span>Select All</span>
+                      <span className="context-menu-shortcut">⌘A</span>
                     </button>
                   </div>
                 ) : null}
