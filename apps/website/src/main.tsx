@@ -88,6 +88,8 @@ function App() {
   const [searchCaseSensitive, setSearchCaseSensitive] = useState(false);
   const [searchWholeWord, setSearchWholeWord] = useState(false);
   const [searchRegex, setSearchRegex] = useState(false);
+  const [searchMatchIndex, setSearchMatchIndex] = useState(0);
+  const [searchMatchCount, setSearchMatchCount] = useState(0);
   const [fontSize, setFontSizeState] = useState(() => {
     const stored = localStorage.getItem("tmuapp.fontSize");
     return stored ? Number(stored) : 14;
@@ -140,6 +142,10 @@ function App() {
           rows: rows || 34,
           onData: (data) => terminalDataHandler.current(data),
           onResize: scheduleResizeActivePane,
+          onSearchResults: (index, count) => {
+            setSearchMatchIndex(index);
+            setSearchMatchCount(count);
+          },
         });
         terminalReady.current = terminal.current.init();
       }
@@ -704,7 +710,8 @@ function App() {
       const active = document.activeElement;
       if (
         active instanceof HTMLInputElement ||
-        active instanceof HTMLTextAreaElement ||
+        (active instanceof HTMLTextAreaElement &&
+          !active.classList.contains("xterm-helper-textarea")) ||
         active instanceof HTMLSelectElement
       ) {
         return;
@@ -1174,6 +1181,11 @@ function App() {
                         }
                       }}
                     />
+                    {searchMatchCount > 0 ? (
+                      <span className="search-match-count">
+                        {searchMatchIndex}/{searchMatchCount}
+                      </span>
+                    ) : null}
                     <button
                       className="search-btn"
                       type="button"
