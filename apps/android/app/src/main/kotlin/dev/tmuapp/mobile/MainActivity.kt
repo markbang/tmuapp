@@ -1056,6 +1056,7 @@ function initTerm(){
                 AndroidView(
                     factory = { ctx ->
                         WebView(ctx).apply {
+                            val wv = this
                             settings.javaScriptEnabled = true
                             settings.domStorageEnabled = true
                             setBackgroundColor(palette.terminalBg.toArgb())
@@ -1073,9 +1074,8 @@ function initTerm(){
                                 onReady = {
                                     onLoadingChange(false)
                                     onError(null)
-                                    // Write any buffered content
                                     if (ansi.isNotEmpty()) {
-                                        view.evaluateJavascript("writeAnsi(${toJsString(ansi)})", null)
+                                        wv.evaluateJavascript("writeAnsi(${toJsString(ansi)})", null)
                                         lastWritten = ansi
                                     }
                                 }
