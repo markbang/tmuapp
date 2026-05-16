@@ -5,7 +5,6 @@ import android.content.Context
 import android.graphics.Typeface
 import android.os.Bundle
 import android.util.Log
-import android.view.View
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebView
@@ -183,8 +182,6 @@ private fun TmuappClient(window: android.view.Window, prefs: android.content.Sha
     var paneInput by rememberSaveable { mutableStateOf("") }
     var streamConn by remember { mutableStateOf<StreamConnection?>(null) }
     var showShortcuts by rememberSaveable { mutableStateOf(false) }
-    var terminalLoading by remember { mutableStateOf(false) }
-    var terminalError by remember { mutableStateOf<String?>(null) }
     val sessionPreviews = remember { mutableStateMapOf<String, String>() }
     val palette = if (darkMode) DarkPalette else LightPalette
     val scope = rememberCoroutineScope()
@@ -479,6 +476,7 @@ private fun TmuappClient(window: android.view.Window, prefs: android.content.Sha
                     showComposer = true
                     view = AppView.Overview
                 },
+                onShowShortcuts = { showShortcuts = true },
             )
             notice?.let { NoticeBanner(it, palette) { notice = null } }
 
@@ -525,6 +523,7 @@ private fun TmuappClient(window: android.view.Window, prefs: android.content.Sha
                     onSplitHorizontal = { splitPane("horizontal") },
                     onSplitVertical = { splitPane("vertical") },
                     onKillWindow = { killCurrentWindow() },
+                    onTerminalInput = { data -> streamConn?.sendInput(data) },
                 )
                 AppView.Settings -> SettingsScreen(
                     apiBase = apiBase,
@@ -617,6 +616,7 @@ private fun TopBar(
     onRefresh: () -> Unit,
     onSettings: () -> Unit,
     onNewSession: () -> Unit,
+    onShowShortcuts: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(
@@ -649,7 +649,7 @@ private fun TopBar(
             }
             StatusPill(statusLabel(status, operation), statusTone(status), palette)
             if (view == AppView.Manage) {
-                SecondaryButton("?", enabled = true, palette = palette, onClick = { showShortcuts = true })
+                SecondaryButton("?", enabled = true, palette = palette, onClick = onShowShortcuts)
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
@@ -724,6 +724,7 @@ private fun ManageScreen(
     onSplitHorizontal: () -> Unit,
     onSplitVertical: () -> Unit,
     onKillWindow: () -> Unit,
+    onTerminalInput: (String) -> Unit,
 ) {
     val session = snapshot.sessions.find { it.id == selectedSession }
     val windows = selectedSession?.let { snapshot.windows[it].orEmpty() }.orEmpty()
@@ -756,9 +757,7 @@ private fun ManageScreen(
         TerminalWebView(
             ansi = if (capture.startsWith("Select a session") || capture.startsWith("No pane")) "" else capture,
             palette = palette,
-            onInput = { data ->
-                streamConn?.sendInput(data)
-            },
+            onInput = onTerminalInput,
             onLoadingChange = { /* managed in TerminalJsBridge */ },
             onError = { /* managed in TerminalJsBridge */ },
         )
