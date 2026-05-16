@@ -22,8 +22,25 @@ export function createTmuxStream(
   const control = runStream(["-C", "attach-session", "-t", target]);
   let stdoutBuffer = "";
   let closed = false;
+  // Buffer control-stream lines until the initial capture is sent.
+  // Without this the live stream can deliver output before the capture
+  // completes, causing the same content (e.g. shell prompt) to appear twice.
+  let captureSent = false;
+  const pendingLines: string[] = [];
 
-  void sendInitialCapture(target, runCommand, callbacks.onData, callbacks.onError);
+  void sendInitialCapture(
+    target,
+    runCommand,
+    (data) => {
+      callbacks.onData(data);
+      captureSent = true;
+      for (const line of pendingLines) {
+        handleControlLine(line.replace(/\r$/u, ""), callbacks.onData);
+      }
+      pendingLines.length = 0;
+    },
+    callbacks.onError,
+  );
 
   control.stdout.setEncoding("utf8");
   control.stdout.on("data", (chunk: string) => {
@@ -32,7 +49,11 @@ export function createTmuxStream(
     stdoutBuffer = lines.pop() ?? "";
 
     for (const line of lines) {
-      handleControlLine(line.replace(/\r$/u, ""), callbacks.onData);
+      if (captureSent) {
+        handleControlLine(line.replace(/\r$/u, ""), callbacks.onData);
+      } else {
+        pendingLines.push(line);
+      }
     }
   });
 

@@ -26,21 +26,15 @@ export function fitTerminalToContainer(
   if (fit.columns !== term.cols || fit.rows !== term.rows) {
     term.resize(fit.columns, fit.rows);
   }
-  // WTerm._lockHeight() sets an inline height that overrides our CSS
-  // height:100%. After resize, the inline height is stale (based on the
-  // old rows). Remove it so CSS height:100% takes effect and the element
-  // fills the parent container correctly.
-  term.element.style.height = "";
 }
 
 export function measureTerminalFit(
   element: HTMLElement,
   metricsRef?: React.MutableRefObject<TerminalCellMetrics | undefined>,
 ) {
-  // WTerm with autoResize:false sets its own height via _lockHeight(),
-  // which makes element.clientHeight reflect WTerm's desired viewport size
-  // rather than the available space in the container. Measure the parent
-  // instead so we resize to the actual available dimensions.
+  // Measure the parent container for available space. The terminal element
+  // (either the xterm-wrapper or the #terminal container) may not fill the
+  // full container until after resize, so we use the parent's dimensions.
   const container = element.parentElement ?? element;
   const containerStyles = getComputedStyle(container);
   const contentWidth =
@@ -69,8 +63,34 @@ export function measureTerminalFit(
 }
 
 export function measureTerminalCell(element: HTMLElement): TerminalCellMetrics {
+  // xterm.js creates accessibility rows in the DOM even with WebGL/Canvas
+  // rendering. Use them as the primary measurement source when available.
+  const xtermRows = element.querySelector<HTMLElement>(".xterm-rows");
+  if (xtermRows) {
+    const row = xtermRows.querySelector<HTMLElement>("div");
+    if (row) {
+      const rowHeight = row.getBoundingClientRect().height;
+      if (rowHeight > 0) {
+        // Measure cell width from the element's computed font
+        const probeCell = document.createElement("span");
+        probeCell.textContent = "W";
+        probeCell.style.position = "absolute";
+        probeCell.style.visibility = "hidden";
+        const styles = getComputedStyle(element);
+        probeCell.style.fontFamily = styles.fontFamily;
+        probeCell.style.fontSize = styles.fontSize;
+        element.appendChild(probeCell);
+        const cellWidth = probeCell.getBoundingClientRect().width;
+        probeCell.remove();
+        if (cellWidth > 0) {
+          return { cellWidth, rowHeight };
+        }
+      }
+    }
+  }
+
+  // Fallback: generic DOM probe (used before xterm.js open() or on failure)
   const probeRow = document.createElement("div");
-  probeRow.className = "term-row";
   probeRow.style.position = "absolute";
   probeRow.style.visibility = "hidden";
   const probeCell = document.createElement("span");

@@ -84,6 +84,7 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
     implementation("com.squareup.okhttp3:okhttp:5.3.2")
+    implementation("org.connectbot:termlib:0.0.39")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

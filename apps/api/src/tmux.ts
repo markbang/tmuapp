@@ -94,7 +94,7 @@ export function createTmuxService(run: TmuxRunner = runTmux) {
     },
 
     async sendInput(target: string, data: string) {
-      await run(["send-keys", "-t", sanitizeTarget(target), "-l", data]);
+      await run(buildSendKeysArgs(sanitizeTarget(target), data));
       return { ok: true };
     },
 
@@ -206,3 +206,59 @@ function clampInteger(value: number, min: number, max: number) {
 
   return Math.max(min, Math.min(max, Math.trunc(value)));
 }
+
+/**
+ * Build tmux send-keys arguments. For single control characters (codes
+ * 0x00–0x1f and 0x7f) we use tmux key names (C-a, C-c, Enter, Tab, Escape,
+ * BSpace) so that the terminal driver and/or the foreground process receive a
+ * proper signal / escape sequence rather than a bare literal byte.  In raw
+ * terminal mode (e.g. pi, vim) bare control bytes are read as data and do
+ * NOT generate SIGINT / EOF / etc.
+ *
+ * For multi-byte data and printable characters we keep the `-l` (literal)
+ * flag so that sequences like `\x1b[A` (arrow-up) are forwarded correctly.
+ */
+export function buildSendKeysArgs(target: string, data: string): string[] {
+  if (data.length === 1) {
+    const code = data.charCodeAt(0);
+    if (code <= 0x1f || code === 0x7f) {
+      const keyName = CONTROL_KEY_NAMES.get(code);
+      if (keyName) return ["send-keys", "-t", target, keyName];
+    }
+  }
+  return ["send-keys", "-t", target, "-l", data];
+}
+
+const CONTROL_KEY_NAMES: ReadonlyMap<number, string> = new Map([
+  [0x01, "C-a"],
+  [0x02, "C-b"],
+  [0x03, "C-c"],
+  [0x04, "C-d"],
+  [0x05, "C-e"],
+  [0x06, "C-f"],
+  [0x07, "C-g"],
+  [0x08, "BSpace"],
+  [0x09, "Tab"],
+  [0x0b, "C-k"],
+  [0x0c, "C-l"],
+  [0x0d, "Enter"],
+  [0x0e, "C-n"],
+  [0x0f, "C-o"],
+  [0x10, "C-p"],
+  [0x11, "C-q"],
+  [0x12, "C-r"],
+  [0x13, "C-s"],
+  [0x14, "C-t"],
+  [0x15, "C-u"],
+  [0x16, "C-v"],
+  [0x17, "C-w"],
+  [0x18, "C-x"],
+  [0x19, "C-y"],
+  [0x1a, "C-z"],
+  [0x1b, "Escape"],
+  [0x1c, "C-\\"],
+  [0x1d, "C-]"],
+  [0x1e, "C-^"],
+  [0x1f, "C-_"],
+  [0x7f, "BSpace"],
+]);

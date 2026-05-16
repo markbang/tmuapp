@@ -20,6 +20,31 @@
   --success-bg: rgba(39, 166, 68, 0.18);
   --warning: #d99a2b;
   --warning-bg: rgba(217, 154, 43, 0.16);
+  --primary-dim-border: rgba(94, 106, 210, 0.58);
+  --primary-subtle-border: rgba(94, 106, 210, 0.55);
+  --primary-subtle-bg: rgba(94, 106, 210, 0.16);
+  --primary-focus-ring: rgba(94, 106, 210, 0.45);
+  --primary-focus-border: rgba(130, 143, 255, 0.66);
+  --primary-focus-shadow: rgba(94, 106, 210, 0.22);
+  --danger-hover-border: rgba(255, 107, 107, 0.62);
+  --danger-hover-bg: rgba(255, 107, 107, 0.1);
+  --danger-dim-border: rgba(255, 107, 107, 0.42);
+  --danger-dim-bg: rgba(255, 107, 107, 0.08);
+  --danger-panel-border: rgba(255, 107, 107, 0.38);
+  --danger-notice-border: rgba(255, 107, 107, 0.4);
+  --danger-empty-border: rgba(255, 107, 107, 0.35);
+  --danger-text: #ff8a8a;
+  --success-text: #c8f7d2;
+  --warning-text: #ffe2a8;
+  --danger-text-status: #ffb8b8;
+  --skeleton-shine: var(--surface-3);
+  --preview-bg: color-mix(in srgb, var(--canvas) 95%, var(--surface-1) 5%);
+  --preview-text: #d8dee9;
+  --danger-surface: #1a1112;
+  --primary-focus-outline: rgba(94, 106, 210, 0.8);
+  --terminal-overlay: rgba(15, 16, 17, 0.85);
+  --modal-backdrop: rgba(1, 1, 2, 0.62);
+  --white: #fff;
   --font:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
@@ -32,3 +57,14 @@
   -moz-osx-font-smoothing: grayscale;
   color-scheme: dark;
 }
+
+/*
+ * Surface ladder (darkest → lightest):
+ *   canvas (#010102) → surface-1 (#0f1011) → surface-2 (#141516)
+ *   → surface-3 (#18191a) → surface-4 (#191a1b)
+ *
+ * Primary accent opacity scale:
+ *   0.16 (subtle bg)  → 0.22 (focus shadow) → 0.45 (focus ring)
+ *   → 0.55 (subtle border) → 0.58 (dim border) → 0.66 (focus border)
+ *   → 0.80 (focus outline)
+ */

@@ -141,4 +141,9 @@
   [class*="Spinner"] {
     animation: none !important;
   }
+
+  .terminal-status-dot {
+    animation: none !important;
+    opacity: 1;
+  }
 }

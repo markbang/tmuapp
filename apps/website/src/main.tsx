@@ -1,16 +1,22 @@
-import "@wterm/dom/css";
-import { WTerm } from "@wterm/dom";
-import { Alert } from "@heroui/react/alert";
+import "@xterm/xterm/css/xterm.css";
+import { createTerminal, type TermAdapter } from "./terminal/terminal-adapter";
 import { Button } from "@heroui/react/button";
-import { Card } from "@heroui/react/card";
 import { Chip } from "@heroui/react/chip";
 import { Input } from "@heroui/react/input";
 import { Spinner } from "@heroui/react/spinner";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { type TmuxPane, type TmuxSession, type TmuxSnapshot, type TmuxWindow } from "utils";
+import type { TmuxSnapshot, TmuxWindow } from "utils";
 import "./style.css";
 import { apiLabel, apiTokenStorageKey, request, streamUrl } from "./api/client";
+import { ConfirmWindowKill } from "./components/ConfirmWindowKill";
+import { InlineLoading } from "./components/InlineLoading";
+import { NoticeBanner } from "./components/NoticeBanner";
+import { SessionComposer } from "./components/SessionComposer";
+import { SessionGrid } from "./components/SessionGrid";
+import { StatusChip } from "./components/StatusChip";
+import { TokenPanel } from "./components/TokenPanel";
+import { WindowStrip } from "./components/WindowStrip";
 import {
   fitTerminalToContainer,
   type TerminalCellMetrics,
@@ -29,39 +35,20 @@ import {
   isScrolledToBottom,
   scrollTerminalToBottomIfFollowing,
 } from "./terminal/terminal-scroll";
-
-type CaptureResult = {
-  target: string;
-  ansi: string;
-  lines: number;
-  terminal: {
-    rows: number;
-    columns: number;
-    cursorRow: number;
-    cursorColumn: number;
-  };
-};
-
-type View = "overview" | "manage";
-type AsyncStatus = "idle" | "loading" | "refreshing" | "error";
-type Operation = "refresh" | "create" | "split" | "kill" | "input" | "resize" | "token";
-
-type Selection = {
-  session?: string;
-  window?: string;
-  pane?: string;
-};
-
-type Notice = {
-  tone: "success" | "warning" | "danger" | "neutral";
-  title: string;
-  body?: string;
-};
-
-type PreviewState = {
-  text: string;
-  status: "loading" | "ready" | "fallback" | "empty";
-};
+import {
+  activeOrFirstPane,
+  currentPanes,
+  currentSession,
+  currentWindows,
+  defaultSessionName,
+  firstPaneForSession,
+  message,
+  panesForSession,
+  previewText,
+  reconcileSelection,
+  type Selection,
+} from "./tmux-helpers";
+import type { AsyncStatus, CaptureResult, Notice, Operation, PreviewState, View } from "./types";
 
 function App() {
   const [view, setView] = useState<View>("overview");
@@ -85,8 +72,8 @@ function App() {
   const [, setFitSize] = useState("pending");
 
   const terminalElement = useRef<HTMLDivElement | null>(null);
-  const terminal = useRef<WTerm | undefined>(undefined);
-  const terminalReady = useRef<Promise<WTerm> | undefined>(undefined);
+  const terminal = useRef<TermAdapter | undefined>(undefined);
+  const terminalReady = useRef<Promise<void> | undefined>(undefined);
   const terminalDataHandler = useRef<(data: string) => void>(() => {});
   const terminalShouldFollow = useRef(true);
   const resizeScheduler = useRef<(columns: number, rows: number) => void>(() => {});
@@ -95,6 +82,14 @@ function App() {
   const resizeTimer = useRef<number | undefined>(undefined);
   const lastResize = useRef<string | undefined>(undefined);
   const terminalCellMetrics = useRef<TerminalCellMetrics | undefined>(undefined);
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [fontSize, setFontSizeState] = useState(() => {
+    const stored = localStorage.getItem("tmuapp.fontSize");
+    return stored ? Number(stored) : 14;
+  });
+  const paneActivity = useRef<Record<string, number>>({});
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const sessions = snapshot?.sessions ?? [];
   const selectedSession = currentSession(snapshot, selection.session);
@@ -135,8 +130,7 @@ function App() {
           return undefined;
         }
 
-        terminal.current = new WTerm(element, {
-          autoResize: false,
+        terminal.current = createTerminal(element, {
           cols: columns || 120,
           cursorBlink: true,
           rows: rows || 34,
@@ -144,18 +138,27 @@ function App() {
           onResize: scheduleResizeActivePane,
         });
         terminalReady.current = terminal.current.init();
-        element.addEventListener("scroll", () => {
-          if (isScrolledNearTop(element)) {
-            terminalShouldFollow.current = false;
-            return;
-          }
-          if (isScrolledToBottom(element)) {
-            terminalShouldFollow.current = true;
-          }
-        });
       }
 
       await terminalReady.current;
+      // xterm.js scrolls via its .xterm-viewport element, not the container.
+      // Attach the scroll listener after init (when the viewport exists).
+      {
+        const viewport = terminal.current?.element.querySelector<HTMLElement>(".xterm-viewport");
+        if (viewport && !viewport.hasAttribute("data-scroll-listener")) {
+          viewport.setAttribute("data-scroll-listener", "1");
+          viewport.addEventListener("scroll", () => {
+            // Hand off to the scroll helpers which also resolve the viewport.
+            if (isScrolledNearTop(viewport)) {
+              terminalShouldFollow.current = false;
+              return;
+            }
+            if (isScrolledToBottom(viewport)) {
+              terminalShouldFollow.current = true;
+            }
+          });
+        }
+      }
       await waitForLayout();
       fitTerminalToContainer(terminal.current, terminalCellMetrics);
       setFitSize(`${terminal.current.cols}x${terminal.current.rows}`);
@@ -313,7 +316,15 @@ function App() {
           window.clearTimeout(fallbackTimer);
           setTerminalStatus("idle");
           const shouldFollow = terminalShouldFollow.current;
-          term.write(payload.data);
+          // Record activity timestamp for the current pane so the
+          // window strip can show an activity indicator on tabs.
+          paneActivity.current[paneId] = Date.now();
+          // normalizeAnsi adds \r before bare \n so that cursor resets to
+          // column 0 on each new line. The tmux control-mode stream may
+          // deliver bare \n (LF) which xterm.js treats as line-feed-only
+          // (cursor moves down without returning to column 0), causing
+          // staircase / overlapping text with TUI applications.
+          term.write(normalizeAnsi(payload.data));
           scrollTerminalToBottomIfFollowing(term.element, shouldFollow);
           return;
         }
@@ -434,7 +445,7 @@ function App() {
 
       followTerminalOutput(terminalElement.current, terminalShouldFollow);
       // The form-based input path: send text data + an Enter key via HTTP.
-      // When streaming live, the WTerm onData handler (sendTerminalData) already
+      // When streaming live, the terminal onData handler (sendTerminalData) already
       // sends raw keystrokes through WebSocket — we don't need to duplicate that here.
       // Using HTTP ensures the input + Enter is properly sequenced.
       setOperation("input");
@@ -640,6 +651,14 @@ function App() {
       terminalStream.current?.close();
       terminalStream.current = undefined;
       streamedPane.current = undefined;
+      // Dispose the xterm instance and clear refs so that when the user
+      // returns to the manage view a fresh terminal is created on the new
+      // DOM element. Without this, ensureTerminal skips creation because
+      // terminal.current is still set (to the now-unmounted instance).
+      terminal.current?.dispose();
+      terminal.current = undefined;
+      terminalReady.current = undefined;
+      terminalCellMetrics.current = undefined;
       return;
     }
 
@@ -664,6 +683,156 @@ function App() {
   useEffect(() => {
     return () => terminalStream.current?.close();
   }, []);
+
+  // Keyboard shortcuts for window/pane switching when the terminal is focused.
+  useEffect(() => {
+    if (view !== "manage") return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Only activate when the terminal area has focus, not when the
+      // input row or any form control is focused.
+      const active = document.activeElement;
+      if (
+        active instanceof HTMLInputElement ||
+        active instanceof HTMLTextAreaElement ||
+        active instanceof HTMLSelectElement
+      ) {
+        return;
+      }
+
+      if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+        // Alt+1..9: switch to window by index
+        if (e.key >= "1" && e.key <= "9") {
+          e.preventDefault();
+          const idx = Number.parseInt(e.key) - 1;
+          const win = windows[idx];
+          if (win) {
+            const pane = activeOrFirstPane(snapshot, win.id)?.id;
+            setSelection((prev) => ({ ...prev, window: win.id, pane }));
+            setTerminalStatus("loading");
+            void connectTerminalStream(pane);
+          }
+          return;
+        }
+
+        // Alt+ArrowLeft/Right: previous/next window
+        if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+          e.preventDefault();
+          const currentIdx = windows.findIndex((w) => w.id === selection.window);
+          if (currentIdx === -1 || windows.length <= 1) return;
+          const nextIdx =
+            e.key === "ArrowRight"
+              ? (currentIdx + 1) % windows.length
+              : (currentIdx - 1 + windows.length) % windows.length;
+          const win = windows[nextIdx];
+          if (win) {
+            const pane = activeOrFirstPane(snapshot, win.id)?.id;
+            setSelection((prev) => ({ ...prev, window: win.id, pane }));
+            setTerminalStatus("loading");
+            void connectTerminalStream(pane);
+          }
+        }
+        return;
+      }
+
+      // Ctrl+Alt+ArrowLeft/Right: previous/next pane in the current window
+      if (e.ctrlKey && e.altKey && !e.metaKey && !e.shiftKey) {
+        if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+          e.preventDefault();
+          const currentIdx = panes.findIndex((p) => p.id === selection.pane);
+          if (currentIdx === -1 || panes.length <= 1) return;
+          const nextIdx =
+            e.key === "ArrowRight"
+              ? (currentIdx + 1) % panes.length
+              : (currentIdx - 1 + panes.length) % panes.length;
+          const pane = panes[nextIdx];
+          if (pane) {
+            setSelection((prev) => ({ ...prev, pane: pane.id }));
+            setTerminalStatus("loading");
+            void connectTerminalStream(pane.id);
+          }
+        }
+      }
+
+      // Ctrl+L: focus the pane input line (standard terminal clear-screen
+      // shortcut repurposed as focus command when the terminal is active).
+      if (e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && e.key === "l") {
+        e.preventDefault();
+        const input = document.querySelector<HTMLInputElement>('input[name="pane-input"]');
+        if (input) {
+          input.focus();
+          input.select();
+        }
+        return;
+      }
+
+      // Cmd+F or Ctrl+Shift+F: toggle terminal search
+      if (
+        (e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key === "f") ||
+        (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && e.key === "F")
+      ) {
+        e.preventDefault();
+        setShowSearch((prev) => !prev);
+        return;
+      }
+
+      // Font size controls: Cmd+=/Cmd+-/Cmd+0 (macOS) or Ctrl+=/Ctrl+-/Ctrl+0
+      const isFontSizeMod = e.metaKey || e.ctrlKey;
+      if (isFontSizeMod && !e.altKey && !e.shiftKey) {
+        if (e.key === "=" || e.key === "+") {
+          e.preventDefault();
+          setFontSizeState((prev) => {
+            const next = Math.min(prev + 1, 24);
+            localStorage.setItem("tmuapp.fontSize", String(next));
+            if (terminal.current) {
+              terminal.current.setFontSize(next);
+              terminalCellMetrics.current = undefined;
+              fitTerminalToContainer(terminal.current, terminalCellMetrics);
+            }
+            return next;
+          });
+          return;
+        }
+        if (e.key === "-") {
+          e.preventDefault();
+          setFontSizeState((prev) => {
+            const next = Math.max(prev - 1, 10);
+            localStorage.setItem("tmuapp.fontSize", String(next));
+            if (terminal.current) {
+              terminal.current.setFontSize(next);
+              terminalCellMetrics.current = undefined;
+              fitTerminalToContainer(terminal.current, terminalCellMetrics);
+            }
+            return next;
+          });
+          return;
+        }
+        if (e.key === "0") {
+          e.preventDefault();
+          const next = 14;
+          localStorage.setItem("tmuapp.fontSize", String(next));
+          setFontSizeState(next);
+          if (terminal.current) {
+            terminal.current.setFontSize(next);
+            terminalCellMetrics.current = undefined;
+            fitTerminalToContainer(terminal.current, terminalCellMetrics);
+          }
+          return;
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [view, windows, panes, selection, snapshot, connectTerminalStream]);
+
+  // Auto-focus the search input when the search bar opens.
+  useEffect(() => {
+    if (showSearch && searchInputRef.current) {
+      searchInputRef.current.focus();
+      searchInputRef.current.select();
+    }
+  }, [showSearch]);
 
   useEffect(() => {
     if (view !== "overview" || !snapshot) {
@@ -769,7 +938,16 @@ function App() {
             onPress={() => void refresh("manual")}
             aria-label="Refresh sessions"
           >
-            {operation === "refresh" ? <Spinner size="sm" aria-label="Refreshing sessions" /> : "R"}
+            {operation === "refresh" ? (
+              <Spinner size="sm" aria-label="Refreshing sessions" />
+            ) : (
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path
+                  d="M13.65 2.35A7.96 7.96 0 008 0a8 8 0 100 16 7.96 7.96 0 005.657-2.343 1 1 0 10-1.414-1.414A6 6 0 118 2a5.99 5.99 0 014.243 1.757L10.5 5.5H16V0l-2.35 2.35z"
+                  fill="currentColor"
+                />
+              </svg>
+            )}
           </Button>
           <Button className="ghost" type="button" onPress={configureApiToken}>
             Token
@@ -848,6 +1026,8 @@ function App() {
               <WindowStrip
                 windows={windows}
                 selectedWindow={selection.window}
+                snapshot={snapshot}
+                paneActivity={paneActivity.current}
                 onSelect={(windowId) => {
                   const pane = activeOrFirstPane(snapshot, windowId)?.id;
                   setSelection((current) => ({ ...current, window: windowId, pane }));
@@ -860,12 +1040,56 @@ function App() {
                 <div className="terminal-toolbar">
                   <div>
                     <h2 className="terminal-heading">
+                      {terminalStatus === "loading" || terminalStatus === "refreshing" ? (
+                        <span className="terminal-status-dot" aria-hidden="true" />
+                      ) : null}
                       {selectedPane?.title || selectedPane?.currentCommand || "No pane selected"}
                     </h2>
                     <span>
                       {selectedPane
                         ? `${selectedPane.width}x${selectedPane.height} ${selectedPane.currentPath}`
                         : "Create a pane or choose another window"}
+                    </span>
+                  </div>
+                  <div className="terminal-toolbar-center">
+                    <span className="font-size-control">
+                      <Button
+                        className="font-size-btn"
+                        type="button"
+                        aria-label="Decrease font size"
+                        isDisabled={fontSize <= 10}
+                        onPress={() => {
+                          const next = Math.max(fontSize - 1, 10);
+                          localStorage.setItem("tmuapp.fontSize", String(next));
+                          setFontSizeState(next);
+                          if (terminal.current) {
+                            terminal.current.setFontSize(next);
+                            terminalCellMetrics.current = undefined;
+                            fitTerminalToContainer(terminal.current, terminalCellMetrics);
+                          }
+                        }}
+                      >
+                        −
+                      </Button>
+                      <span className="font-size-value">{fontSize}px</span>
+                      <Button
+                        className="font-size-btn"
+                        type="button"
+                        aria-label="Increase font size"
+                        isDisabled={fontSize >= 24}
+                        onPress={() => {
+                          const next = Math.min(fontSize + 1, 24);
+                          localStorage.setItem("tmuapp.fontSize", String(next));
+                          setFontSizeState(next);
+                          if (terminal.current) {
+                            terminal.current.setFontSize(next);
+                            terminalCellMetrics.current = undefined;
+                            fitTerminalToContainer(terminal.current, terminalCellMetrics);
+                          }
+                        }}
+                      >
+                        +
+                      </Button>
                     </span>
                   </div>
                   <div className="terminal-actions">
@@ -896,7 +1120,82 @@ function App() {
                   </div>
                 </div>
 
-                <div className="terminal-wrap">
+                {showSearch ? (
+                  <form
+                    className="terminal-search"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      const addon = terminal.current?.searchAddon;
+                      if (addon && searchQuery) {
+                        addon.findNext(searchQuery);
+                      }
+                    }}
+                  >
+                    <input
+                      ref={searchInputRef}
+                      className="terminal-search-input"
+                      type="text"
+                      placeholder="Find…"
+                      value={searchQuery}
+                      onChange={(e) => {
+                        setSearchQuery(e.target.value);
+                        const addon = terminal.current?.searchAddon;
+                        if (addon && e.target.value) {
+                          addon.findNext(e.target.value);
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") {
+                          setShowSearch(false);
+                          setSearchQuery("");
+                          terminal.current?.focus();
+                        }
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          if (e.shiftKey) {
+                            terminal.current?.searchAddon?.findPrevious(searchQuery);
+                          } else {
+                            terminal.current?.searchAddon?.findNext(searchQuery);
+                          }
+                        }
+                      }}
+                    />
+                    <Button
+                      className="ghost search-btn"
+                      type="button"
+                      aria-label="Previous match"
+                      onPress={() => terminal.current?.searchAddon?.findPrevious(searchQuery)}
+                    >
+                      ↑
+                    </Button>
+                    <Button
+                      className="ghost search-btn"
+                      type="button"
+                      aria-label="Next match"
+                      onPress={() => terminal.current?.searchAddon?.findNext(searchQuery)}
+                    >
+                      ↓
+                    </Button>
+                    <Button
+                      className="ghost search-btn"
+                      type="button"
+                      aria-label="Close search"
+                      onPress={() => {
+                        setShowSearch(false);
+                        setSearchQuery("");
+                        terminal.current?.focus();
+                      }}
+                    >
+                      ✕
+                    </Button>
+                  </form>
+                ) : null}
+
+                <div
+                  className={`terminal-wrap${terminalStatus === "loading" ? " switching" : ""}`}
+                  id="terminal-panel"
+                  role="tabpanel"
+                >
                   {terminalStatus === "loading" ? (
                     <InlineLoading label="Preparing terminal…" />
                   ) : null}
@@ -927,7 +1226,13 @@ function App() {
                     value={inputValue}
                     onChange={(event) => setInputValue(event.target.value)}
                     onKeyDown={(event) => {
-                      if (event.key === "Tab") {
+                      if (
+                        event.key === "Tab" &&
+                        !event.shiftKey &&
+                        !event.ctrlKey &&
+                        !event.metaKey &&
+                        !event.altKey
+                      ) {
                         event.preventDefault();
                         void sendInputKey("Tab", inputValue);
                       }
@@ -940,9 +1245,6 @@ function App() {
                   >
                     {operation === "input" ? "Sending…" : "Run"}
                   </Button>
-                  <Button className="ghost" type="button" onPress={() => void sendKeys(["Enter"])}>
-                    Enter
-                  </Button>
                   {panes.length > 1 ? (
                     <Chip className="pane-count-pill">{panes.length}</Chip>
                   ) : null}
@@ -950,11 +1252,13 @@ function App() {
               </div>
 
               {panes.length > 1 ? (
-                <div className="pane-strip" aria-label="Panes">
+                <div className="pane-strip" role="tablist" aria-label="Panes">
                   {panes.map((pane) => (
                     <Button
                       key={pane.id}
                       className={`pane-tab ${pane.id === selection.pane ? "selected" : ""}`}
+                      aria-selected={pane.id === selection.pane}
+                      aria-controls="terminal-panel"
                       type="button"
                       onPress={() => {
                         setSelection((current) => ({ ...current, pane: pane.id }));
@@ -962,7 +1266,7 @@ function App() {
                         void connectTerminalStream(pane.id);
                       }}
                     >
-                      {pane.title || pane.currentCommand || pane.id}
+                      {pane.index}:{pane.title || pane.currentCommand || pane.id}
                     </Button>
                   ))}
                 </div>
@@ -973,499 +1277,6 @@ function App() {
       </main>
     </div>
   );
-}
-
-function SessionGrid(props: {
-  status: AsyncStatus;
-  sessions: TmuxSession[];
-  snapshot: TmuxSnapshot | undefined;
-  selectedSession: string | undefined;
-  previews: Record<string, PreviewState>;
-  onRetry: () => void;
-  onCreate: () => void;
-  onOpen: (sessionId: string) => void;
-}) {
-  if (props.status === "loading") {
-    return <InlineLoading label="Loading tmux sessions…" />;
-  }
-
-  if (props.status === "error") {
-    return (
-      <EmptyState
-        tone="neutral"
-        title="tmux API is offline"
-        body="Start the tmux API or retry when it is available."
-        actionLabel="Retry"
-        onAction={props.onRetry}
-      />
-    );
-  }
-
-  if (props.sessions.length === 0) {
-    return (
-      <EmptyState
-        tone="neutral"
-        title="No tmux sessions"
-        body="Create a new session to start managing panes from the browser."
-      />
-    );
-  }
-
-  return (
-    <div id="sessions" className="session-grid">
-      {props.sessions.map((session) => {
-        const windows = props.snapshot?.windows[session.id] ?? [];
-        const panes = panesForSession(props.snapshot, session.id);
-        const primaryPane = firstPaneForSession(props.snapshot, session.id);
-        const preview = props.previews[session.id] ?? {
-          text: "Loading preview…",
-          status: "loading" as const,
-        };
-        const command = primaryPane?.currentCommand || primaryPane?.title || "idle";
-        const path = primaryPane?.currentPath || "No working directory";
-
-        return (
-          <Button
-            key={session.id}
-            className={`session-card ${session.id === props.selectedSession ? "selected" : ""}`}
-            data-session-card={session.id}
-            type="button"
-            aria-label={`Open session ${session.name} with ${windows.length} windows and ${panes.length} panes`}
-            onPress={() => props.onOpen(session.id)}
-          >
-            <span className="session-card-top">
-              <strong>{session.name}</strong>
-              <StatusChip tone={session.attached ? "success" : "warning"}>
-                {session.attached ? "attached" : "detached"}
-              </StatusChip>
-            </span>
-            <span className="session-stats">
-              <span>{windows.length} windows</span>
-              <span>{panes.length} panes</span>
-              <span>{command}</span>
-            </span>
-            <span className="session-path">{path}</span>
-            <pre className={`session-preview ${preview.status}`}>{preview.text}</pre>
-          </Button>
-        );
-      })}
-    </div>
-  );
-}
-
-function SessionComposer(props: {
-  cwd: string;
-  isCreating: boolean;
-  name: string;
-  onCancel: () => void;
-  onCwdChange: (value: string) => void;
-  onNameChange: (value: string) => void;
-  onSubmit: () => void;
-  showCancel: boolean;
-}) {
-  return (
-    <form
-      className="session-composer"
-      aria-label="Create session"
-      onSubmit={(event) => {
-        event.preventDefault();
-        props.onSubmit();
-      }}
-    >
-      <div className="composer-copy">
-        <strong>New tmux session</strong>
-        <span>Names may use letters, numbers, dot, underscore, plus, or dash.</span>
-      </div>
-      <Input
-        className="composer-name"
-        name="session-name"
-        aria-label="Session name"
-        autoComplete="off"
-        placeholder="work…"
-        spellCheck={false}
-        value={props.name}
-        onChange={(event) => props.onNameChange(event.target.value)}
-      />
-      <Input
-        className="composer-cwd"
-        name="session-cwd"
-        aria-label="Working directory"
-        autoComplete="off"
-        placeholder="/repo…"
-        spellCheck={false}
-        value={props.cwd}
-        onChange={(event) => props.onCwdChange(event.target.value)}
-      />
-      <div className="composer-actions">
-        {props.showCancel ? (
-          <Button className="ghost" type="button" onPress={props.onCancel}>
-            Cancel
-          </Button>
-        ) : null}
-        <Button
-          className="primary"
-          type="submit"
-          isDisabled={props.isCreating || !props.name.trim()}
-        >
-          {props.isCreating ? "Creating…" : "Create"}
-        </Button>
-      </div>
-    </form>
-  );
-}
-
-function WindowStrip(props: {
-  windows: TmuxWindow[];
-  selectedWindow: string | undefined;
-  onSelect: (windowId: string) => void;
-}) {
-  if (props.windows.length === 0) {
-    return <div className="window-strip empty-line">No windows in selected session</div>;
-  }
-
-  return (
-    <div className="window-strip" role="tablist" aria-label="Windows">
-      {props.windows.map((window) => (
-        <Button
-          key={window.id}
-          id={windowTabId(window.id)}
-          className={`window-tab ${window.id === props.selectedWindow ? "selected" : ""}`}
-          type="button"
-          onPress={() => props.onSelect(window.id)}
-        >
-          <span>
-            {window.index}:{window.name}
-          </span>
-          <small>{window.panes}</small>
-        </Button>
-      ))}
-    </div>
-  );
-}
-
-function InlineLoading({ label }: { label: string }) {
-  return (
-    <div className="inline-loading" role="status" aria-live="polite">
-      <Spinner size="sm" aria-hidden="true" />
-      <span>{label}</span>
-    </div>
-  );
-}
-
-function TokenPanel(props: {
-  token: string;
-  onCancel: () => void;
-  onSave: () => void;
-  onTokenChange: (value: string) => void;
-}) {
-  const dialogRef = useFocusTrap<HTMLFormElement>();
-
-  return (
-    <div
-      className="floating-panel"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="token-title"
-      onClick={props.onCancel}
-      onKeyDown={(event) => handleDialogKeyDown(event, props.onCancel)}
-    >
-      <form
-        ref={dialogRef}
-        className="panel-card settings-panel"
-        onClick={(event) => event.stopPropagation()}
-        onSubmit={(event) => {
-          event.preventDefault();
-          props.onSave();
-        }}
-      >
-        <div>
-          <h2 id="token-title">API Token</h2>
-          <p>Requests use this token until it is cleared.</p>
-        </div>
-        <Input
-          name="api-token"
-          aria-label="Bearer token"
-          type="password"
-          autoComplete="off"
-          spellCheck={false}
-          placeholder="tmux-token…"
-          value={props.token}
-          onChange={(event) => props.onTokenChange(event.target.value)}
-        />
-        <div className="panel-actions">
-          <Button className="ghost" type="button" onPress={props.onCancel}>
-            Cancel
-          </Button>
-          <Button className="primary" type="submit">
-            Save Token
-          </Button>
-        </div>
-      </form>
-    </div>
-  );
-}
-
-function ConfirmWindowKill(props: {
-  isDeleting: boolean;
-  window: TmuxWindow;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  const dialogRef = useFocusTrap<HTMLDivElement>();
-
-  return (
-    <div
-      className="floating-panel"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="kill-title"
-      onClick={props.onCancel}
-      onKeyDown={(event) => handleDialogKeyDown(event, props.onCancel)}
-    >
-      <div
-        ref={dialogRef}
-        className="panel-card confirm-panel"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div>
-          <h2 id="kill-title">Kill Window</h2>
-          <p>
-            Window {props.window.index}:{props.window.name} and its panes will close immediately.
-          </p>
-        </div>
-        <div className="panel-actions">
-          <Button className="ghost" type="button" onPress={props.onCancel}>
-            Cancel
-          </Button>
-          <Button
-            className="danger"
-            type="button"
-            onPress={props.onConfirm}
-            isDisabled={props.isDeleting}
-          >
-            {props.isDeleting ? "Killing…" : "Kill Window"}
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function EmptyState(props: {
-  tone: "neutral" | "danger";
-  title: string;
-  body: string;
-  actionLabel?: string;
-  onAction?: () => void;
-}) {
-  return (
-    <Card className={`empty-state ${props.tone}`}>
-      <strong>{props.title}</strong>
-      <p>{props.body}</p>
-      {props.actionLabel && props.onAction ? (
-        <Button className="primary" type="button" onPress={props.onAction}>
-          {props.actionLabel}
-        </Button>
-      ) : null}
-    </Card>
-  );
-}
-
-function NoticeBanner({ notice, onDismiss }: { notice: Notice; onDismiss: () => void }) {
-  return (
-    <Alert
-      className={`notice ${notice.tone}`}
-      status={notice.tone === "danger" ? "danger" : "success"}
-      role="alert"
-      aria-live="assertive"
-    >
-      <Alert.Content>
-        <Alert.Title>{notice.title}</Alert.Title>
-        {notice.body ? <Alert.Description>{notice.body}</Alert.Description> : null}
-      </Alert.Content>
-      <Button
-        className="ghost notice-close"
-        type="button"
-        onPress={onDismiss}
-        aria-label="Dismiss notification"
-      >
-        Close
-      </Button>
-    </Alert>
-  );
-}
-
-function useFocusTrap<T extends HTMLElement>() {
-  const ref = useRef<T | null>(null);
-
-  useEffect(() => {
-    const panel = ref.current;
-    if (!panel) {
-      return;
-    }
-
-    const previousFocus =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const focusable = getFocusableElements(panel);
-    (focusable[0] ?? panel).focus();
-
-    return () => previousFocus?.focus();
-  }, []);
-
-  useEffect(() => {
-    const panel = ref.current;
-    if (!panel) {
-      return;
-    }
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Tab") {
-        return;
-      }
-
-      const focusable = getFocusableElements(panel);
-      if (focusable.length === 0) {
-        event.preventDefault();
-        panel.focus();
-        return;
-      }
-
-      const first = focusable[0];
-      const last = focusable.at(-1);
-      if (!first || !last) {
-        return;
-      }
-
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-
-    panel.addEventListener("keydown", onKeyDown);
-    return () => panel.removeEventListener("keydown", onKeyDown);
-  }, []);
-
-  return ref;
-}
-
-function getFocusableElements(container: HTMLElement) {
-  return Array.from(
-    container.querySelectorAll<HTMLElement>(
-      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-    ),
-  ).filter((element) => !element.hasAttribute("disabled") && element.tabIndex !== -1);
-}
-
-function handleDialogKeyDown(event: React.KeyboardEvent, onCancel: () => void) {
-  if (event.key === "Escape") {
-    event.stopPropagation();
-    onCancel();
-  }
-}
-
-function windowTabId(windowId: string) {
-  return `window-tab-${windowId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
-}
-
-function StatusChip({
-  tone,
-  children,
-}: {
-  tone: "success" | "warning" | "danger" | "neutral";
-  children: React.ReactNode;
-}) {
-  return <Chip className={`status ${tone}`}>{children}</Chip>;
-}
-
-function reconcileSelection(snapshot: TmuxSnapshot | undefined, current: Selection): Selection {
-  const sessions = snapshot?.sessions ?? [];
-  const sessionIds = sessions.map((session) => session.id);
-  const session = chooseExisting(current.session, sessionIds) ?? sessions[0]?.id;
-  const windows = session && snapshot ? (snapshot.windows[session] ?? []) : [];
-  const windowIds = windows.map((window) => window.id);
-  const window =
-    chooseExisting(current.window, windowIds) ?? activeOrFirstWindow(snapshot, session)?.id;
-  const panes = window && snapshot ? (snapshot.panes[window] ?? []) : [];
-  const paneIds = panes.map((pane) => pane.id);
-  const pane = chooseExisting(current.pane, paneIds) ?? activeOrFirstPane(snapshot, window)?.id;
-
-  return { session, window, pane };
-}
-
-function currentSession(snapshot: TmuxSnapshot | undefined, sessionId: string | undefined) {
-  return snapshot?.sessions.find((session) => session.id === sessionId);
-}
-
-function currentWindows(
-  snapshot: TmuxSnapshot | undefined,
-  sessionId: string | undefined,
-): TmuxWindow[] {
-  return sessionId && snapshot ? (snapshot.windows[sessionId] ?? []) : [];
-}
-
-function currentPanes(
-  snapshot: TmuxSnapshot | undefined,
-  windowId: string | undefined,
-): TmuxPane[] {
-  return windowId && snapshot ? (snapshot.panes[windowId] ?? []) : [];
-}
-
-function panesForSession(snapshot: TmuxSnapshot | undefined, sessionId: string): TmuxPane[] {
-  const windows = snapshot?.windows[sessionId] ?? [];
-  return windows.flatMap((window) => snapshot?.panes[window.id] ?? []);
-}
-
-function activeOrFirstWindow(
-  snapshot: TmuxSnapshot | undefined,
-  sessionId: string | undefined,
-): TmuxWindow | undefined {
-  const windows = sessionId && snapshot ? (snapshot.windows[sessionId] ?? []) : [];
-  return windows.find((window) => window.active) ?? windows[0];
-}
-
-function activeOrFirstPane(
-  snapshot: TmuxSnapshot | undefined,
-  windowId: string | undefined,
-): TmuxPane | undefined {
-  const panes = windowId && snapshot ? (snapshot.panes[windowId] ?? []) : [];
-  return panes.find((pane) => pane.active) ?? panes[0];
-}
-
-function firstPaneForSession(
-  snapshot: TmuxSnapshot | undefined,
-  sessionId: string,
-): TmuxPane | undefined {
-  const window = activeOrFirstWindow(snapshot, sessionId);
-  return activeOrFirstPane(snapshot, window?.id);
-}
-
-function chooseExisting(current: string | undefined, candidates: string[]) {
-  return current && candidates.includes(current) ? current : undefined;
-}
-
-function previewText(ansi: string) {
-  const text = stripAnsi(ansi)
-    .replaceAll("\r", "")
-    .split("\n")
-    .map((line) => line.trimEnd())
-    .filter(Boolean)
-    .slice(-5)
-    .join("\n");
-
-  return text || "No output";
-}
-
-const ansiPattern = new RegExp(
-  String.raw`[\x1b\x9b][[\]\()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[a-zA-Z\d]*)*)?\x07)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))`,
-  "g",
-);
-
-function stripAnsi(value: string) {
-  return value.replace(ansiPattern, "");
 }
 
 async function resizeActivePane(
@@ -1488,16 +1299,8 @@ async function resizeActivePane(
   }
 }
 
-function resetTerminalSnapshot(term: WTerm) {
-  term.bridge?.init(term.cols, term.rows);
-}
-
-function message(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function defaultSessionName() {
-  return `work-${Math.floor(Date.now() / 1000)}`;
+function resetTerminalSnapshot(term: TermAdapter) {
+  term.reset();
 }
 
 createRoot(document.querySelector<HTMLDivElement>("#app")!).render(<App />);

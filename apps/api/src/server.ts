@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { WebSocketServer, type WebSocket } from "ws";
 import { dirname, extname, join, normalize } from "node:path";
 import { fileURLToPath, URL } from "node:url";
-import { createTmuxService, runTmux, type TmuxRunner } from "./tmux.js";
+import { buildSendKeysArgs, createTmuxService, runTmux, type TmuxRunner } from "./tmux.js";
 import { sanitizeTarget } from "utils";
 import { createTmuxStream, type TmuxStreamRunner } from "./tmux-stream.js";
 
@@ -197,13 +197,7 @@ function attachPaneStream(socket: WebSocket, target: string, options: ApiServerO
         | { type: "resize"; columns?: number; rows?: number };
 
       if (message.type === "input") {
-        runSocketCommand(socket, runCommand, [
-          "send-keys",
-          "-t",
-          safeTarget,
-          "-l",
-          message.data ?? "",
-        ]);
+        runSocketCommand(socket, runCommand, buildSendKeysArgs(safeTarget, message.data ?? ""));
       } else if (message.type === "resize") {
         const columns = clampInteger(Number(message.columns), 20, 500);
         const rows = clampInteger(Number(message.rows), 5, 200);

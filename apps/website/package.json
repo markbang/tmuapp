@@ -12,6 +12,11 @@
   "dependencies": {
     "@heroui/react": "catalog:",
     "@wterm/dom": "catalog:",
+    "@xterm/addon-image": "catalog:",
+    "@xterm/addon-ligatures": "catalog:",
+    "@xterm/addon-search": "catalog:",
+    "@xterm/addon-webgl": "catalog:",
+    "@xterm/xterm": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
     "utils": "workspace:*"

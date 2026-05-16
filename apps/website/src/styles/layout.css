@@ -35,8 +35,7 @@ body {
   gap: 16px;
   padding: 0 max(20px, env(safe-area-inset-right)) 0 max(20px, env(safe-area-inset-left));
   border-bottom: 1px solid var(--hairline);
-  background: rgba(1, 1, 2, 0.96);
-  backdrop-filter: blur(10px);
+  background: var(--canvas);
   contain: paint;
   will-change: transform;
 }
@@ -57,7 +56,7 @@ body {
   width: 34px;
   height: 34px;
   border-radius: 8px;
-  color: #fff;
+  color: var(--white);
   background: var(--primary);
   font-family: var(--mono);
   font-size: 13px;
@@ -107,7 +106,7 @@ h1 {
 .overview-head h2 {
   color: var(--ink);
   font-size: 28px;
-  font-weight: 650;
+  font-weight: 700;
   line-height: 1.2;
   letter-spacing: 0;
 }
@@ -127,7 +126,7 @@ h1 {
   grid-template-columns: minmax(190px, 0.65fr) minmax(180px, 0.9fr) minmax(220px, 1.15fr) auto;
   align-items: end;
   gap: 10px;
-  border: 1px solid var(--hairline);
+  border: 1px solid var(--hairline-strong);
   border-radius: 8px;
   padding: 12px;
   background: var(--surface-1);
@@ -137,7 +136,7 @@ h1 {
   min-width: 0;
   display: grid;
   gap: 2px;
-  padding-bottom: 4px;
+  padding: 4px 0;
 }
 
 .composer-copy strong {
@@ -179,19 +178,24 @@ h1 {
   content-visibility: auto;
   contain-intrinsic-size: 238px;
   transition:
-    border-color 150ms ease,
-    background 150ms ease,
-    transform 150ms ease;
+    border-color 200ms ease,
+    background-color 200ms ease,
+    transform 200ms ease,
+    box-shadow 200ms ease;
 }
 
 .session-card:hover,
 .session-card.selected {
-  border-color: rgba(94, 106, 210, 0.58);
-  background: #121318;
+  border-color: var(--primary-dim-border);
+  background: var(--surface-2);
 }
 
-.session-card:hover {
+.session-card:hover:not(.selected) {
   transform: translateY(-1px);
+}
+
+.session-card.selected {
+  box-shadow: inset 3px 0 0 var(--primary);
 }
 
 .session-card:active,
@@ -244,7 +248,7 @@ h1 {
   border: 1px solid var(--hairline);
   border-radius: 999px;
   padding: 2px 8px;
-  background: var(--surface-2);
+  background: var(--surface-3);
 }
 
 .session-path {
@@ -258,15 +262,21 @@ h1 {
   border: 1px solid var(--hairline);
   border-radius: 8px;
   padding: 10px;
-  color: #d8dee9;
-  background: #050506;
+  color: var(--preview-text);
+  background: var(--preview-bg);
   font: 12px/1.35 var(--mono);
   white-space: pre-wrap;
   overflow-wrap: break-word;
   tab-size: 8;
 }
 
-.session-preview.loading,
+.session-preview.loading {
+  animation: skeleton-pulse 1.5s ease-in-out infinite;
+  color: transparent;
+  background: var(--surface-2);
+  user-select: none;
+}
+
 .session-preview.empty,
 .session-preview.fallback {
   color: var(--ink-subtle);
@@ -285,6 +295,7 @@ h1 {
   padding: 24px;
   color: var(--ink-muted);
   background: var(--surface-1);
+  box-shadow: 0 0 0 1px var(--hairline);
 }
 
 .empty-state strong {
@@ -293,7 +304,7 @@ h1 {
 }
 
 .empty-state.danger {
-  border-color: rgba(255, 107, 107, 0.35);
+  border-color: var(--danger-empty-border);
   background: var(--danger-bg);
 }
 
@@ -327,11 +338,12 @@ h1 {
   color: var(--ink);
   background: var(--surface-2);
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35);
+  animation: notice-slide-in 300ms ease-out;
 }
 
 .notice.danger {
-  border-color: rgba(255, 107, 107, 0.4);
-  background: #1a1112;
+  border-color: var(--danger-notice-border);
+  background: var(--danger-surface);
 }
 
 .notice.warning {
@@ -340,4 +352,25 @@ h1 {
 
 .notice-close {
   white-space: nowrap;
+}
+
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+@keyframes notice-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }

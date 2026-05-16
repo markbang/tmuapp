@@ -5,8 +5,18 @@
   display: grid;
   place-items: start center;
   padding: 72px 20px 20px;
-  background: rgba(1, 1, 2, 0.62);
+  background: var(--modal-backdrop);
   overscroll-behavior: contain;
+  animation: panel-enter 200ms ease;
+}
+
+@keyframes panel-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .panel-card {
@@ -17,8 +27,22 @@
   border-radius: 8px;
   padding: 16px;
   color: var(--ink);
-  background: var(--surface-2);
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+  background: var(--surface-3);
+  box-shadow:
+    0 0 0 1px var(--hairline-strong),
+    0 4px 16px rgba(0, 0, 0, 0.3);
+  animation: panel-card-enter 250ms ease;
+}
+
+@keyframes panel-card-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
 }
 
 .panel-card h2 {
@@ -33,7 +57,7 @@
 }
 
 .confirm-panel {
-  border-color: rgba(255, 107, 107, 0.38);
+  border-color: var(--danger-panel-border);
 }
 
 .panel-actions {
@@ -79,8 +103,8 @@
 }
 
 .window-tab.selected {
-  border-color: rgba(94, 106, 210, 0.55);
-  background: rgba(94, 106, 210, 0.16);
+  border-color: var(--primary-subtle-border);
+  background: var(--primary-subtle-bg);
 }
 
 .window-strip {
@@ -128,8 +152,8 @@
 }
 
 .pane-tab.selected {
-  border-color: rgba(94, 106, 210, 0.55);
-  background: rgba(94, 106, 210, 0.16);
+  border-color: var(--primary-subtle-border);
+  background: var(--primary-subtle-bg);
   color: var(--ink);
 }
 

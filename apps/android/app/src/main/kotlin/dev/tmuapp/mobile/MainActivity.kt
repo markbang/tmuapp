@@ -1,9 +1,15 @@
 package dev.tmuapp.mobile
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Typeface
 import android.os.Bundle
 import android.util.Log
+import android.view.View
+import android.webkit.JavascriptInterface
+import android.webkit.WebChromeClient
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -39,9 +45,11 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -60,6 +68,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.launch
 import kotlin.system.exitProcess
 
@@ -160,6 +171,9 @@ private fun TmuappClient(window: android.view.Window, prefs: android.content.Sha
     var selectedWindow by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedPane by rememberSaveable { mutableStateOf<String?>(null) }
     var capture by remember { mutableStateOf("Select a session to open a pane preview.") }
+    // Buffer for WebSocket streaming — accumulates output so WebView
+    // always receives the full terminal state.
+    var captureBuffer by remember { mutableStateOf("") }
     var status by remember { mutableStateOf(AsyncStatus.Idle) }
     var notice by remember { mutableStateOf<Notice?>(null) }
     var operation by remember { mutableStateOf<Operation?>(null) }
@@ -167,6 +181,11 @@ private fun TmuappClient(window: android.view.Window, prefs: android.content.Sha
     var newSessionCwd by rememberSaveable { mutableStateOf("") }
     var showComposer by rememberSaveable { mutableStateOf(false) }
     var paneInput by rememberSaveable { mutableStateOf("") }
+    var streamConn by remember { mutableStateOf<StreamConnection?>(null) }
+    var showShortcuts by rememberSaveable { mutableStateOf(false) }
+    var terminalLoading by remember { mutableStateOf(false) }
+    var terminalError by remember { mutableStateOf<String?>(null) }
+    val sessionPreviews = remember { mutableStateMapOf<String, String>() }
     val palette = if (darkMode) DarkPalette else LightPalette
     val scope = rememberCoroutineScope()
 
@@ -234,11 +253,11 @@ private fun TmuappClient(window: android.view.Window, prefs: android.content.Sha
             return
         }
         operation = Operation.Capture
-        capture = "Capturing pane $paneId..."
         scope.launch {
             try {
                 val next = client.capturePane(paneId)
                 capture = next.ansi.ifBlank { "Pane $paneId is empty." }
+                captureBuffer = next.ansi
             } catch (exception: Exception) {
                 capture = "Unable to capture $paneId\n${exception.readableMessage()}"
                 notice = Notice(NoticeTone.Danger, "Pane capture failed", exception.readableMessage())
@@ -289,6 +308,21 @@ private fun TmuappClient(window: android.view.Window, prefs: android.content.Sha
     fun sendPaneInput(sendEnter: Boolean) {
         val pane = selectedPane ?: return
         val command = paneInput
+        val conn = streamConn
+
+        if (conn?.isOpen == true) {
+            // Send via WebSocket (live stream)
+            if (command.isNotBlank()) {
+                conn.sendInput(command)
+                conn.sendInput("\r")
+                paneInput = ""
+            } else if (sendEnter) {
+                conn.sendInput("\r")
+            }
+            return
+        }
+
+        // Fallback: HTTP
         if (!sendEnter && command.isBlank()) return
         operation = Operation.Input
         scope.launch {
@@ -301,7 +335,6 @@ private fun TmuappClient(window: android.view.Window, prefs: android.content.Sha
                     paneInput = ""
                 }
                 notice = Notice(NoticeTone.Success, "Input sent", pane)
-                refreshCapture(pane)
             } catch (exception: Exception) {
                 notice = Notice(NoticeTone.Danger, "Unable to send input", exception.readableMessage())
             } finally {
@@ -353,12 +386,68 @@ private fun TmuappClient(window: android.view.Window, prefs: android.content.Sha
     }
 
     LaunchedEffect(view, selectedPane) {
-        if (view == AppView.Manage && selectedPane != null) {
-            refreshCapture(selectedPane)
+        // Close previous stream
+        streamConn?.close()
+        streamConn = null
+        captureBuffer = ""
+
+        val pane = selectedPane
+        if (view == AppView.Manage && pane != null) {
+            // Initial HTTP capture for instant feedback
+            scope.launch {
+                try {
+                    val next = client.capturePane(pane)
+                    capture = next.ansi.ifBlank { " " }
+                    captureBuffer = next.ansi
+                } catch (_: Exception) {
+                    capture = "Connecting…"
+                }
+            }
+            // Open WebSocket stream for live output
+            streamConn = client.connectStream(
+                paneId = pane,
+                onOutput = { data ->
+                    captureBuffer += data
+                    capture = captureBuffer
+                },
+                onError = { msg ->
+                    notice = Notice(NoticeTone.Danger, "Stream error", msg)
+                },
+                onClose = {
+                    if (streamConn?.isOpen == false) streamConn = null
+                },
+            )
+        }
+    }
+
+    // Fetch session previews for overview cards
+    LaunchedEffect(view, snapshot) {
+        if (view != AppView.Overview) return@LaunchedEffect
+        snapshot.sessions.forEach { session ->
+            if (session.id in sessionPreviews) return@forEach
+            val window = snapshot.windows[session.id].orEmpty().firstOrNull { it.active }
+                ?: snapshot.windows[session.id].orEmpty().firstOrNull()
+            val pane = window?.let { w ->
+                snapshot.panes[w.id].orEmpty().firstOrNull { it.active }
+                    ?: snapshot.panes[w.id].orEmpty().firstOrNull()
+            }
+            if (pane != null) {
+                scope.launch {
+                    try {
+                        val pc = client.capturePane(pane.id, 8)
+                        val text = pc.ansi.take(300)
+                        sessionPreviews[session.id] = text.ifBlank { pane.title.ifBlank { pane.currentCommand } }
+                    } catch (_: Exception) {
+                        sessionPreviews[session.id] = pane.title.ifBlank { pane.currentCommand.ifBlank { pane.id } }
+                    }
+                }
+            }
         }
     }
 
     BackHandler(enabled = view != AppView.Overview && configured) {
+        streamConn?.close()
+        streamConn = null
         view = AppView.Overview
     }
 
@@ -393,6 +482,10 @@ private fun TmuappClient(window: android.view.Window, prefs: android.content.Sha
             )
             notice?.let { NoticeBanner(it, palette) { notice = null } }
 
+            if (showShortcuts) {
+                ShortcutSheet(palette) { showShortcuts = false }
+            }
+
             when (view) {
                 AppView.Overview -> OverviewScreen(
                     snapshot = snapshot,
@@ -401,6 +494,7 @@ private fun TmuappClient(window: android.view.Window, prefs: android.content.Sha
                     showComposer = showComposer || snapshot.sessions.isEmpty(),
                     newSessionName = newSessionName,
                     newSessionCwd = newSessionCwd,
+                    sessionPreviews = sessionPreviews,
                     palette = palette,
                     onSessionNameChange = { newSessionName = it },
                     onSessionCwdChange = { newSessionCwd = it },
@@ -554,6 +648,9 @@ private fun TopBar(
                 }
             }
             StatusPill(statusLabel(status, operation), statusTone(status), palette)
+            if (view == AppView.Manage) {
+                SecondaryButton("?", enabled = true, palette = palette, onClick = { showShortcuts = true })
+            }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
             SecondaryButton("Refresh", enabled = operation != Operation.Refresh, palette = palette, modifier = Modifier.weight(1f), onClick = onRefresh)
@@ -571,6 +668,7 @@ private fun OverviewScreen(
     showComposer: Boolean,
     newSessionName: String,
     newSessionCwd: String,
+    sessionPreviews: Map<String, String>,
     palette: TmuappPalette,
     onSessionNameChange: (String) -> Unit,
     onSessionCwdChange: (String) -> Unit,
@@ -602,7 +700,7 @@ private fun OverviewScreen(
             status == AsyncStatus.Loading -> InlineState("Loading tmux sessions...", palette)
             status == AsyncStatus.Error -> EmptyState("tmux API is offline", "Retry when the API is available.", "Retry", palette, onRetry)
             snapshot.sessions.isEmpty() -> EmptyState("No tmux sessions", "Create a session to start managing panes.", null, palette, null)
-            else -> SessionGrid(snapshot, palette, onOpenSession)
+            else -> SessionGrid(snapshot, sessionPreviews, palette, onOpenSession)
         }
     }
 }
@@ -655,11 +753,14 @@ private fun ManageScreen(
                 nextPane.title.ifBlank { nextPane.currentCommand.ifBlank { nextPane.id } }
             }
         }
-        TerminalPanel(
-            title = pane?.title?.ifBlank { pane.currentCommand } ?: "Terminal capture",
-            text = capture,
-            loading = operation == Operation.Capture,
+        TerminalWebView(
+            ansi = if (capture.startsWith("Select a session") || capture.startsWith("No pane")) "" else capture,
             palette = palette,
+            onInput = { data ->
+                streamConn?.sendInput(data)
+            },
+            onLoadingChange = { /* managed in TerminalJsBridge */ },
+            onError = { /* managed in TerminalJsBridge */ },
         )
         SurfaceCard(palette = palette) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -752,14 +853,14 @@ private fun SessionComposer(
 }
 
 @Composable
-private fun SessionGrid(snapshot: TmuxSnapshot, palette: TmuappPalette, onOpen: (String) -> Unit) {
+private fun SessionGrid(snapshot: TmuxSnapshot, sessionPreviews: Map<String, String>, palette: TmuappPalette, onOpen: (String) -> Unit) {
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
         val columns = if (maxWidth >= 560.dp) 2 else 1
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             snapshot.sessions.chunked(columns).forEach { row ->
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                     row.forEach { session ->
-                        SessionCard(session, snapshot, palette, Modifier.weight(1f)) { onOpen(session.id) }
+                        SessionCard(session, snapshot, sessionPreviews[session.id], palette, Modifier.weight(1f)) { onOpen(session.id) }
                     }
                     repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
                 }
@@ -772,6 +873,7 @@ private fun SessionGrid(snapshot: TmuxSnapshot, palette: TmuappPalette, onOpen: 
 private fun SessionCard(
     session: TmuxSession,
     snapshot: TmuxSnapshot,
+    preview: String?,
     palette: TmuappPalette,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
@@ -812,14 +914,16 @@ private fun SessionCard(
                     .fillMaxWidth()
                     .heightIn(min = 74.dp)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(palette.canvas)
-                    .border(1.dp, palette.stroke, RoundedCornerShape(8.dp))
+                    .background(palette.previewBg)
+                    .border(1.dp, palette.hairline, RoundedCornerShape(8.dp))
                     .padding(10.dp),
             ) {
                 BasicText(
-                    text = primaryPane?.let { it.title.ifBlank { it.currentCommand.ifBlank { it.id } } } ?: "Open to create or choose panes.",
-                    style = TextStyle(color = palette.ink, fontFamily = FontFamily.Monospace, fontSize = 12.sp, lineHeight = 16.sp),
-                    maxLines = 4,
+                    text = preview?.ifBlank { null }
+                        ?: primaryPane?.let { it.title.ifBlank { it.currentCommand.ifBlank { it.id } } }
+                        ?: "Loading preview…",
+                    style = TextStyle(color = if (preview != null) palette.ink else palette.inkSubtle, fontFamily = FontFamily.Monospace, fontSize = 12.sp, lineHeight = 16.sp),
+                    maxLines = 6,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
@@ -861,7 +965,7 @@ private fun <T> SelectorStrip(
                         .height(42.dp)
                         .clip(RoundedCornerShape(8.dp))
                         .background(if (selected) palette.primary else palette.surface1)
-                        .border(1.dp, if (selected) palette.primary else palette.stroke, RoundedCornerShape(8.dp))
+                        .border(1.dp, if (selected) palette.primary else palette.hairline, RoundedCornerShape(8.dp))
                         .clickable { onSelect(id) }
                         .padding(horizontal = 10.dp),
                     contentAlignment = Alignment.Center,
@@ -878,35 +982,155 @@ private fun <T> SelectorStrip(
     }
 }
 
+@SuppressLint("SetJavaScriptEnabled")
 @Composable
-private fun TerminalPanel(title: String, text: String, loading: Boolean, palette: TmuappPalette) {
+private fun TerminalWebView(
+    ansi: String,
+    palette: TmuappPalette,
+    onInput: (String) -> Unit,
+    onLoadingChange: (Boolean) -> Unit = {},
+    onError: (String?) -> Unit = {},
+) {
+    val jsBridge = remember { TerminalJsBridge(onInput) }
+    var lastWritten by remember { mutableStateOf("") }
+    var webViewRef by remember { mutableStateOf<WebView?>(null) }
+
+    // Build HTML with CDN primary + fallback
+    val html = remember {
+        val cdn = "https://cdn.jsdelivr.net/npm/@xterm/xterm@6"
+        val fallbackCdn = "https://unpkg.com/@xterm/xterm@6"
+        """<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<script>window.xtermCdn='$cdn';window.xtermFallbackCdn='$fallbackCdn';</script>
+<script>
+(function load(url){
+  var s=document.createElement('script');
+  s.src=url+'/lib/xterm.min.js';
+  s.onerror=function(){ load(window.xtermFallbackCdn) };
+  s.onload=function(){
+    var w=new Worker(URL.createObjectURL(new Blob([
+      'importScripts("'+url+'/lib/xterm-addon-webgl.min.js")'
+    ],{type:'text/javascript'})));
+    w.onerror=function(){}; // WebGL optional
+    var link=document.createElement('link');
+    link.rel='stylesheet';link.href=url+'/css/xterm.css';
+    document.head.appendChild(link);
+    initTerm()
+  };
+  document.head.appendChild(s);
+})(window.xtermCdn);
+function initTerm(){
+  window.term=new Terminal({
+    theme:{background:'#010102',foreground:'#f7f8f8',cursor:'#5e6ad2',cursorAccent:'#010102'},
+    fontSize:13,fontFamily:'monospace',cursorBlink:true,scrollback:2000,allowProposedApi:true
+  });
+  window.term.open(document.getElementById('terminal'));
+  window.term.onData(function(d){Android.onTerminalInput(d)});
+  window.term.onKey(function(e){
+    if(e.key.length>0){var c=e.key.charCodeAt(0);if(c<32||c===127)Android.onTerminalInput(e.key)}
+  });
+  window.writeAnsi=function(d){window.term.write(d)};
+  Android.onTerminalReady();
+}
+</script>
+<style>body{margin:0;padding:0;background:#010102;overflow:hidden}.xterm{height:100vh;padding:6px 10px}.xterm-viewport{scroll-behavior:smooth}</style>
+</head><body><div id="terminal"></div></body></html>"""
+    }
+
+    // Lifecycle: pause/resume WebView timers
+    DisposableEffect(Unit) {
+        onDispose {
+            webViewRef?.onPause()
+            webViewRef = null
+        }
+    }
+
     SurfaceCard(palette = palette) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 BasicText(
-                    text = title.ifBlank { "Terminal capture" },
+                    text = "Terminal",
                     style = TextStyle(color = palette.ink, fontSize = 16.sp, lineHeight = 20.sp, fontWeight = FontWeight.SemiBold),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
                 )
-                if (loading) StatusPill("loading", NoticeTone.Neutral, palette)
             }
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 240.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(palette.canvas)
-                    .border(1.dp, palette.stroke, RoundedCornerShape(8.dp))
-                    .padding(12.dp),
-            ) {
-                BasicText(
-                    text = text.ifBlank { " " },
-                    style = TextStyle(color = palette.ink, fontFamily = FontFamily.Monospace, fontSize = 12.sp, lineHeight = 17.sp),
+            Box(modifier = Modifier.fillMaxWidth().heightIn(min = 280.dp)) {
+                AndroidView(
+                    factory = { ctx ->
+                        WebView(ctx).apply {
+                            settings.javaScriptEnabled = true
+                            settings.domStorageEnabled = true
+                            setBackgroundColor(palette.terminalBg.toArgb())
+                            webViewClient = object : WebViewClient() {
+                                override fun onPageFinished(view: WebView, url: String) {
+                                    view.evaluateJavascript("document.body.style.backgroundColor='${palette.terminalBg.toHex()}'", null)
+                                }
+                                override fun onReceivedError(view: WebView, code: Int, desc: String, failingUrl: String) {
+                                    onError("Terminal failed to load")
+                                    onLoadingChange(false)
+                                }
+                            }
+                            webChromeClient = WebChromeClient()
+                            addJavascriptInterface(jsBridge.apply {
+                                onReady = {
+                                    onLoadingChange(false)
+                                    onError(null)
+                                    // Write any buffered content
+                                    if (ansi.isNotEmpty()) {
+                                        view.evaluateJavascript("writeAnsi(${toJsString(ansi)})", null)
+                                        lastWritten = ansi
+                                    }
+                                }
+                            }, "Android")
+                            loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
+                        }.also { webViewRef = it }
+                    },
+                    update = { webView ->
+                        if (ansi.isNotEmpty() && ansi != lastWritten) {
+                            webView.evaluateJavascript("try{writeAnsi(${toJsString(ansi)})}catch(e){}", null)
+                            lastWritten = ansi
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 280.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .border(1.dp, palette.hairline, RoundedCornerShape(8.dp)),
                 )
             }
         }
+    }
+}
+
+private fun Color.toHex(): String {
+    val r = (this.red * 255).toInt()
+    val g = (this.green * 255).toInt()
+    val b = (this.blue * 255).toInt()
+    return "#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}"
+}
+
+private fun toJsString(s: String): String {
+    val escaped = s
+        .replace("\\", "\\\\")
+        .replace("\"", "\\\"")
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+        .replace("\u001b", "\\x1b")
+    return "\"$escaped\""
+}
+
+private class TerminalJsBridge(
+    private val onInput: (String) -> Unit,
+) {
+    var onReady: (() -> Unit)? = null
+
+    @JavascriptInterface
+    fun onTerminalInput(data: String) {
+        onInput(data)
+    }
+
+    @JavascriptInterface
+    fun onTerminalReady() {
+        onReady?.invoke()
     }
 }
 
@@ -927,7 +1151,7 @@ private fun ClientField(
                 .height(46.dp)
                 .clip(RoundedCornerShape(8.dp))
                 .background(palette.canvas)
-                .border(1.dp, palette.stroke, RoundedCornerShape(8.dp))
+                .border(1.dp, palette.hairline, RoundedCornerShape(8.dp))
                 .padding(horizontal = 12.dp),
             contentAlignment = Alignment.CenterStart,
         ) {
@@ -957,7 +1181,7 @@ private fun SurfaceCard(
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
             .background(palette.surface1)
-            .border(1.dp, palette.stroke, RoundedCornerShape(8.dp))
+            .border(1.dp, palette.hairline, RoundedCornerShape(8.dp))
             .padding(14.dp),
     ) {
         content()
@@ -1017,7 +1241,7 @@ private fun InlineState(label: String, palette: TmuappPalette) {
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
             .background(palette.surface1)
-            .border(1.dp, palette.stroke, RoundedCornerShape(8.dp))
+            .border(1.dp, palette.hairline, RoundedCornerShape(8.dp))
             .padding(16.dp),
         contentAlignment = Alignment.CenterStart,
     ) {
@@ -1085,7 +1309,7 @@ private fun SecondaryButton(
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
-    AppButton(label, enabled, palette.surface2, if (enabled) palette.ink else palette.inkMuted, modifier, onClick, palette.stroke)
+    AppButton(label, enabled, palette.surface2, if (enabled) palette.ink else palette.inkMuted, modifier, onClick, palette.hairline)
 }
 
 @Composable
@@ -1106,7 +1330,7 @@ private fun IconButton(label: String, palette: TmuappPalette, onClick: () -> Uni
             .size(40.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(palette.surface1)
-            .border(1.dp, palette.stroke, RoundedCornerShape(8.dp))
+            .border(1.dp, palette.hairline, RoundedCornerShape(8.dp))
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -1139,6 +1363,57 @@ private fun AppButton(
             style = TextStyle(color = content, fontSize = 13.sp, lineHeight = 17.sp, fontWeight = FontWeight.SemiBold),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun ShortcutSheet(palette: TmuappPalette, onDismiss: () -> Unit) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        SurfaceCard(palette = palette) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    SectionHeader("Keyboard Shortcuts", "Terminal-native controls", palette)
+                    SecondaryButton("Close", enabled = true, palette = palette, onClick = onDismiss)
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    ShortcutRow("Window 1-9", "Alt + 1…9", palette)
+                    ShortcutRow("Prev/Next Window", "Alt + ← →", palette)
+                    ShortcutRow("Prev/Next Pane", "Ctrl+Alt + ← →", palette)
+                    ShortcutRow("Focus Input", "Ctrl + L", palette)
+                    ShortcutRow("Search Terminal", "Ctrl+Shift + F", palette)
+                    ShortcutRow("Font Size ±", "Cmd/Ctrl + = / -", palette)
+                    ShortcutRow("Reset Font", "Cmd/Ctrl + 0", palette)
+                }
+                BasicText(
+                    text = "All keyboard input in the terminal is forwarded to tmux. Control keys (Ctrl+C, arrows, Tab, Escape) work exactly as in a native terminal.",
+                    style = TextStyle(color = palette.inkMuted, fontSize = 11.sp, lineHeight = 15.sp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShortcutRow(action: String, keys: String, palette: TmuappPalette) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BasicText(text = action, style = TextStyle(color = palette.ink, fontSize = 13.sp, lineHeight = 18.sp))
+        BasicText(
+            text = keys,
+            style = TextStyle(
+                color = palette.primary,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 12.sp,
+                lineHeight = 16.sp,
+                fontWeight = FontWeight.SemiBold
+            ),
         )
     }
 }

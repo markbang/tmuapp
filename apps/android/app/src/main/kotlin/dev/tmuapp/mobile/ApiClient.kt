@@ -8,7 +8,11 @@ import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Request.Builder
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -17,6 +21,10 @@ private val HttpClient = OkHttpClient.Builder()
     .connectTimeout(5, TimeUnit.SECONDS)
     .readTimeout(8, TimeUnit.SECONDS)
     .writeTimeout(8, TimeUnit.SECONDS)
+    .build()
+private val WebSocketClient = OkHttpClient.Builder()
+    .connectTimeout(5, TimeUnit.SECONDS)
+    .readTimeout(0, TimeUnit.MILLISECONDS)  // no read timeout for streams
     .build()
 
 data class TmuxSession(
@@ -56,9 +64,17 @@ data class TmuxSnapshot(
 data class PaneCapture(
     val target: String,
     val ansi: String,
+    val rawAnsi: String,
     val lines: Int,
     val columns: Int,
     val rows: Int,
+)
+
+data class StreamConnection(
+    val isOpen: Boolean,
+    val close: () -> Unit,
+    val sendInput: (String) -> Unit,
+    val sendResize: (Int, Int) -> Unit,
 )
 
 class TmuappApiClient(
@@ -107,6 +123,74 @@ class TmuappApiClient(
 
     suspend fun capturePane(paneId: String, lines: Int = 120): PaneCapture = withContext(Dispatchers.IO) {
         parseCapture(JSONObject(request("GET", "/api/panes/${urlEncode(paneId)}/capture?lines=$lines")))
+    }
+
+    fun connectStream(
+        paneId: String,
+        onOutput: (String) -> Unit,
+        onError: (String) -> Unit,
+        onClose: () -> Unit,
+    ): StreamConnection {
+        val wsUrl = streamUrl(paneId)
+        val wsRequest = Builder().url(wsUrl).build()
+        var socket: WebSocket? = null
+
+        val listener = object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                socket = webSocket
+            }
+
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                try {
+                    val json = JSONObject(text)
+                    when (json.optString("type")) {
+                        "output" -> {
+                            val data = json.optString("data", "")
+                            if (data.isNotEmpty()) onOutput(data)
+                        }
+                        "error" -> onError(json.optString("message", "Stream error"))
+                    }
+                } catch (_: Exception) { /* ignore malformed messages */ }
+            }
+
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                onError(t.message ?: "WebSocket connection failed")
+                onClose()
+            }
+
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                onClose()
+            }
+        }
+
+        val ws = WebSocketClient.newWebSocket(wsRequest, listener)
+
+        return StreamConnection(
+            isOpen = true,
+            close = { ws.close(1000, "client close") },
+            sendInput = { data ->
+                val msg = JSONObject().apply {
+                    put("type", "input")
+                    put("data", data)
+                }
+                ws.send(msg.toString())
+            },
+            sendResize = { cols, rows ->
+                val msg = JSONObject().apply {
+                    put("type", "resize")
+                    put("columns", cols)
+                    put("rows", rows)
+                }
+                ws.send(msg.toString())
+            },
+        )
+    }
+
+    private fun streamUrl(paneId: String): String {
+        val base = apiBase.trim().trimEnd('/')
+        val httpUrl = "$base/api/panes/${urlEncode(paneId)}/stream"
+        val wsUrl = httpUrl.replace("https://", "wss://").replace("http://", "ws://")
+        return if (apiToken?.trim().isNullOrBlank()) wsUrl else "$wsUrl?token=${urlEncode(apiToken!!.trim())}"
     }
 
     private fun request(method: String, path: String, body: String? = null): String {
@@ -158,9 +242,11 @@ private fun parseSnapshot(json: JSONObject): TmuxSnapshot {
 
 private fun parseCapture(json: JSONObject): PaneCapture {
     val terminal = json.optJSONObject("terminal") ?: JSONObject()
+    val raw = json.optString("ansi")
     return PaneCapture(
         target = json.optString("target"),
-        ansi = stripAnsi(json.optString("ansi")),
+        ansi = normalizeAnsi(raw),
+        rawAnsi = raw,
         lines = json.optInt("lines"),
         columns = terminal.optInt("columns"),
         rows = terminal.optInt("rows"),
@@ -208,5 +294,18 @@ private fun <T> JSONArray?.mapJson(transform: (JSONObject) -> T): List<T> {
     return List(length()) { index -> transform(optJSONObject(index) ?: JSONObject()) }
 }
 
-private fun stripAnsi(value: String): String =
-    value.replace(Regex("\\u001B\\[[;?0-9]*[ -/]*[@-~]"), "")
+/**
+ * Add \r before bare \n so the terminal cursor resets to column 0 on each
+ * new line. Mirrors normalizeAnsi() in the web terminal-protocol.ts.
+ */
+private fun normalizeAnsi(ansi: String): String {
+    val sb = StringBuilder(ansi.length + 16)
+    for (i in ansi.indices) {
+        if (ansi[i] == '\n' && (i == 0 || ansi[i - 1] != '\r')) {
+            sb.append("\r\n")
+        } else {
+            sb.append(ansi[i])
+        }
+    }
+    return sb.toString()
+}
