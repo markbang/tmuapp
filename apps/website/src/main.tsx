@@ -1,27 +1,21 @@
 import "@xterm/xterm/css/xterm.css";
-import { createTerminal, type TermAdapter } from "./terminal/terminal-adapter";
 import { Button } from "@heroui/react/button";
-import { Chip } from "@heroui/react/chip";
-import { Input } from "@heroui/react/input";
 import { Spinner } from "@heroui/react/spinner";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import type { TmuxSnapshot, TmuxWindow } from "utils";
+import type { TmuxPane, TmuxSnapshot } from "utils";
 import "./style.css";
-import { apiLabel, apiTokenStorageKey, request, streamUrl } from "./api/client";
-import { ConfirmWindowKill } from "./components/ConfirmWindowKill";
+import { apiLabel, request, streamUrl } from "./api/client";
 import { InlineLoading } from "./components/InlineLoading";
 import { NoticeBanner } from "./components/NoticeBanner";
-import { SessionComposer } from "./components/SessionComposer";
 import { SessionGrid } from "./components/SessionGrid";
-import { StatusChip } from "./components/StatusChip";
 import { TokenPanel } from "./components/TokenPanel";
-import { WindowStrip } from "./components/WindowStrip";
 import {
   fitTerminalToContainer,
   type TerminalCellMetrics,
   waitForLayout,
 } from "./terminal/terminal-fit";
+import { createTerminal, type TermAdapter } from "./terminal/terminal-adapter";
 import {
   isTerminalStreamOpen,
   normalizeAnsi,
@@ -37,13 +31,10 @@ import {
 } from "./terminal/terminal-scroll";
 import {
   activeOrFirstPane,
-  currentPanes,
   currentSession,
-  currentWindows,
   defaultSessionName,
   firstPaneForSession,
   message,
-  panesForSession,
   previewText,
   reconcileSelection,
   type Selection,
@@ -58,15 +49,8 @@ function App() {
   const [terminalStatus, setTerminalStatus] = useState<AsyncStatus>("idle");
   const [notice, setNotice] = useState<Notice>();
   const [operation, setOperation] = useState<Operation>();
-  const [inputValue, setInputValue] = useState("");
-  const [newSessionName, setNewSessionName] = useState(defaultSessionName);
-  const [newSessionCwd, setNewSessionCwd] = useState("");
-  const [showCreateSession, setShowCreateSession] = useState(false);
   const [showTokenSettings, setShowTokenSettings] = useState(false);
-  const [tokenDraft, setTokenDraft] = useState(
-    () => localStorage.getItem(apiTokenStorageKey) ?? "",
-  );
-  const [pendingKillWindow, setPendingKillWindow] = useState<TmuxWindow>();
+  const [tokenDraft, setTokenDraft] = useState(() => "");
   const [previewRun, setPreviewRun] = useState(0);
   const [sessionPreviews, setSessionPreviews] = useState<Record<string, PreviewState>>({});
   const [, setFitSize] = useState("pending");
@@ -82,33 +66,12 @@ function App() {
   const resizeTimer = useRef<number | undefined>(undefined);
   const lastResize = useRef<string | undefined>(undefined);
   const terminalCellMetrics = useRef<TerminalCellMetrics | undefined>(undefined);
-  const [showSearch, setShowSearch] = useState(false);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchCaseSensitive, setSearchCaseSensitive] = useState(false);
-  const [searchWholeWord, setSearchWholeWord] = useState(false);
-  const [searchRegex, setSearchRegex] = useState(false);
-  const [searchMatchIndex, setSearchMatchIndex] = useState(0);
-  const [searchMatchCount, setSearchMatchCount] = useState(0);
-  const [fontSize, setFontSizeState] = useState(() => {
-    const stored = localStorage.getItem("tmuapp.fontSize");
-    return stored ? Number(stored) : 14;
-  });
-  const paneActivity = useRef<Record<string, number>>({});
-  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const sessions = snapshot?.sessions ?? [];
   const selectedSession = currentSession(snapshot, selection.session);
-  const windows = currentWindows(snapshot, selection.session);
-  const panes = currentPanes(snapshot, selection.window);
-  const selectedPane = panes.find((pane) => pane.id === selection.pane);
-  const totalWindows = sessions.reduce(
-    (count, session) => count + (snapshot?.windows[session.id]?.length ?? 0),
-    0,
-  );
-  const totalPanes = sessions.reduce(
-    (count, session) => count + panesForSession(snapshot, session.id).length,
-    0,
+  const selectedPane = useMemo(
+    () => findPane(snapshot, selection.pane),
+    [selection.pane, snapshot],
   );
 
   const applySnapshot = useCallback(
@@ -132,9 +95,7 @@ function App() {
     async (columns = 120, rows = 34) => {
       if (!terminal.current) {
         const element = terminalElement.current;
-        if (!element) {
-          return undefined;
-        }
+        if (!element) return undefined;
 
         terminal.current = createTerminal(element, {
           cols: columns || 120,
@@ -142,32 +103,23 @@ function App() {
           rows: rows || 34,
           onData: (data) => terminalDataHandler.current(data),
           onResize: scheduleResizeActivePane,
-          onSearchResults: (index, count) => {
-            setSearchMatchIndex(index);
-            setSearchMatchCount(count);
-          },
         });
         terminalReady.current = terminal.current.init();
       }
 
       await terminalReady.current;
-      // xterm.js scrolls via its .xterm-viewport element, not the container.
-      // Attach the scroll listener after init (when the viewport exists).
-      {
-        const viewport = terminal.current?.element.querySelector<HTMLElement>(".xterm-viewport");
-        if (viewport && !viewport.hasAttribute("data-scroll-listener")) {
-          viewport.setAttribute("data-scroll-listener", "1");
-          viewport.addEventListener("scroll", () => {
-            // Hand off to the scroll helpers which also resolve the viewport.
-            if (isScrolledNearTop(viewport)) {
-              terminalShouldFollow.current = false;
-              return;
-            }
-            if (isScrolledToBottom(viewport)) {
-              terminalShouldFollow.current = true;
-            }
-          });
-        }
+      const viewport = terminal.current?.element.querySelector<HTMLElement>(".xterm-viewport");
+      if (viewport && !viewport.hasAttribute("data-scroll-listener")) {
+        viewport.setAttribute("data-scroll-listener", "1");
+        viewport.addEventListener("scroll", () => {
+          if (isScrolledNearTop(viewport)) {
+            terminalShouldFollow.current = false;
+            return;
+          }
+          if (isScrolledToBottom(viewport)) {
+            terminalShouldFollow.current = true;
+          }
+        });
       }
       await waitForLayout();
       fitTerminalToContainer(terminal.current, terminalCellMetrics);
@@ -181,12 +133,10 @@ function App() {
   const renderTerminal = useCallback(
     async (capture: CaptureResult) => {
       const term = await ensureTerminal(capture.terminal.columns, capture.terminal.rows);
-      if (!term) {
-        return;
-      }
+      if (!term) return;
 
       const shouldFollow = terminalShouldFollow.current;
-      resetTerminalSnapshot(term);
+      term.reset();
       term.write(normalizeAnsi(capture.ansi));
       scrollTerminalToBottomIfFollowing(term.element, shouldFollow);
     },
@@ -207,12 +157,9 @@ function App() {
 
   const refreshActivePane = useCallback(
     async (paneId = selection.pane) => {
-      if (view !== "manage") {
-        return;
-      }
-
+      if (view !== "manage") return;
       if (!paneId) {
-        renderTerminalText("No tmux pane selected. Create or attach to a session to begin.");
+        renderTerminalText("No tmux window selected. Create or open a window to begin.");
         return;
       }
 
@@ -233,18 +180,11 @@ function App() {
   );
 
   resizeScheduler.current = (columns: number, rows: number) => {
-    if (!selection.pane || view !== "manage") {
-      return;
-    }
+    if (!selection.pane || view !== "manage") return;
 
     const key = `${columns}x${rows}`;
-    if (lastResize.current === key) {
-      return;
-    }
-
-    if (resizeTimer.current) {
-      window.clearTimeout(resizeTimer.current);
-    }
+    if (lastResize.current === key) return;
+    if (resizeTimer.current) window.clearTimeout(resizeTimer.current);
 
     const paneId = selection.pane;
     const nextSelection = { ...selection, pane: paneId };
@@ -258,42 +198,32 @@ function App() {
           const nextSnapshot = await request<TmuxSnapshot>("/api/sessions");
           applySnapshot(nextSnapshot, nextSelection);
         } catch {
-          // Resize already succeeded; capture still gives the terminal the correct grid.
+          // Resize succeeded; a later refresh will reconcile metadata.
         }
-        if (terminalShouldFollow.current) {
-          await refreshActivePane(paneId);
-        }
+        if (terminalShouldFollow.current) await refreshActivePane(paneId);
       })();
     }, 150);
   };
 
   const connectTerminalStream = useCallback(
     async (paneId = selection.pane) => {
-      if (view !== "manage") {
-        return;
-      }
+      if (view !== "manage") return;
 
       terminalStream.current?.close();
       terminalStream.current = undefined;
       streamedPane.current = undefined;
 
       if (!paneId) {
-        renderTerminalText("No tmux pane selected. Create or attach to a session to begin.");
+        renderTerminalText("No tmux window selected. Create or open a window to begin.");
         return;
       }
 
-      const term = await ensureTerminal(selectedPane?.width, selectedPane?.height);
-      if (!term) {
-        return;
-      }
+      const pane = findPane(snapshot, paneId);
+      const term = await ensureTerminal(pane?.width, pane?.height);
+      if (!term) return;
 
-      resetTerminalSnapshot(term);
+      term.reset();
       setTerminalStatus("loading");
-
-      // Resize the tmux pane to match the terminal viewport BEFORE connecting
-      // the stream. This ensures the initial capture (sent via WebSocket by
-      // sendInitialCapture) is formatted for the correct dimensions, so the
-      // content renders without misalignment.
       await resizeActivePane(paneId, term.cols, term.rows, setOperation, setFitSize);
 
       const socket = new WebSocket(streamUrl(`/api/panes/${encodeURIComponent(paneId)}/stream`));
@@ -303,7 +233,6 @@ function App() {
           socket.close();
           terminalStream.current = undefined;
           streamedPane.current = undefined;
-          // Stream didn't deliver content — fall back to HTTP capture.
           void refreshActivePane(paneId);
         }
       }, 3000);
@@ -317,23 +246,13 @@ function App() {
 
       socket.addEventListener("message", (event) => {
         const payload = parseTerminalStreamMessage(event.data);
-        if (!payload) {
-          return;
-        }
+        if (!payload) return;
 
         if (payload.type === "output") {
           receivedOutput = true;
           window.clearTimeout(fallbackTimer);
           setTerminalStatus("idle");
           const shouldFollow = terminalShouldFollow.current;
-          // Record activity timestamp for the current pane so the
-          // window strip can show an activity indicator on tabs.
-          paneActivity.current[paneId] = Date.now();
-          // normalizeAnsi adds \r before bare \n so that cursor resets to
-          // column 0 on each new line. The tmux control-mode stream may
-          // deliver bare \n (LF) which xterm.js treats as line-feed-only
-          // (cursor moves down without returning to column 0), causing
-          // staircase / overlapping text with TUI applications.
           term.write(normalizeAnsi(payload.data));
           scrollTerminalToBottomIfFollowing(term.element, shouldFollow);
           return;
@@ -368,21 +287,10 @@ function App() {
 
       socket.addEventListener("close", () => {
         window.clearTimeout(fallbackTimer);
-        if (terminalStream.current === socket) {
-          terminalStream.current = undefined;
-        }
+        if (terminalStream.current === socket) terminalStream.current = undefined;
       });
     },
-    [
-      ensureTerminal,
-      refreshActivePane,
-      renderTerminalText,
-      resizeActivePane,
-      selectedPane?.height,
-      selectedPane?.width,
-      selection.pane,
-      view,
-    ],
+    [ensureTerminal, refreshActivePane, renderTerminalText, selection.pane, snapshot, view],
   );
 
   const refresh = useCallback(
@@ -393,14 +301,9 @@ function App() {
         const nextSnapshot = await request<TmuxSnapshot>("/api/sessions");
         const nextSelection = applySnapshot(nextSnapshot);
         setStatus("idle");
-        if (mode === "manual") {
-          setNotice({ tone: "success", title: "Sessions refreshed" });
-        }
-        if (view === "manage") {
-          await connectTerminalStream(nextSelection.pane);
-        } else {
-          setPreviewRun((run) => run + 1);
-        }
+        if (mode === "manual") setNotice({ tone: "success", title: "Sessions refreshed" });
+        if (view === "manage") await connectTerminalStream(nextSelection.pane);
+        else setPreviewRun((run) => run + 1);
       } catch (error) {
         setStatus("error");
         if (view === "manage") {
@@ -418,86 +321,9 @@ function App() {
     [applySnapshot, connectTerminalStream, renderTerminalText, view],
   );
 
-  const sendKeys = useCallback(
-    async (keys: string[]) => {
-      if (!selection.pane) {
-        setNotice({ tone: "warning", title: "No pane selected" });
-        return;
-      }
-
-      followTerminalOutput(terminalElement.current, terminalShouldFollow);
-      // Named keys like "Enter" must go through the HTTP /keys endpoint which maps
-      // them to actual terminal key sequences. The WebSocket stream only accepts
-      // raw character data, so named keys can't be sent through it directly.
-      setOperation("input");
-      try {
-        await request(`/api/panes/${encodeURIComponent(selection.pane)}/keys`, {
-          method: "POST",
-          body: { keys },
-        });
-        if (!isTerminalStreamOpen(terminalStream.current)) {
-          await refreshActivePane(selection.pane);
-        }
-      } catch (error) {
-        setNotice({ tone: "danger", title: "Unable to send key", body: message(error) });
-      } finally {
-        setOperation(undefined);
-      }
-    },
-    [refreshActivePane, selection.pane],
-  );
-
-  const sendInput = useCallback(
-    async (data: string) => {
-      if (!selection.pane || data.length === 0) {
-        return;
-      }
-
-      followTerminalOutput(terminalElement.current, terminalShouldFollow);
-      // The form-based input path: send text data + an Enter key via HTTP.
-      // When streaming live, the terminal onData handler (sendTerminalData) already
-      // sends raw keystrokes through WebSocket — we don't need to duplicate that here.
-      // Using HTTP ensures the input + Enter is properly sequenced.
-      setOperation("input");
-      try {
-        await request(`/api/panes/${encodeURIComponent(selection.pane)}/input`, {
-          method: "POST",
-          body: { data },
-        });
-        // Also send Enter after the input text so the shell executes it.
-        await request(`/api/panes/${encodeURIComponent(selection.pane)}/keys`, {
-          method: "POST",
-          body: { keys: ["Enter"] },
-        });
-        if (!isTerminalStreamOpen(terminalStream.current)) {
-          await refreshActivePane(selection.pane);
-        }
-      } catch (error) {
-        setNotice({ tone: "danger", title: "Unable to send input", body: message(error) });
-      } finally {
-        setOperation(undefined);
-      }
-    },
-    [refreshActivePane, selection.pane],
-  );
-
-  const sendInputKey = useCallback(
-    async (key: string, draft = inputValue) => {
-      const value = draft;
-      if (value.length > 0) {
-        await sendInput(value);
-        setInputValue("");
-      }
-      await sendKeys([key]);
-    },
-    [inputValue, sendInput, sendKeys],
-  );
-
   const sendTerminalData = useCallback(
     async (data: string) => {
-      if (!selection.pane || data.length === 0) {
-        return;
-      }
+      if (!selection.pane || data.length === 0) return;
 
       followTerminalOutput(terminalElement.current, terminalShouldFollow);
       const stream = terminalStream.current;
@@ -526,115 +352,44 @@ function App() {
     terminalDataHandler.current = (data) => void sendTerminalData(data);
   }, [sendTerminalData]);
 
-  const openCreateSession = useCallback(() => {
-    setView("overview");
-    setShowCreateSession(true);
-    setNewSessionName((current) => current || defaultSessionName());
-  }, []);
-
   const createSession = useCallback(async () => {
-    const name = newSessionName.trim();
-    const cwd = newSessionCwd.trim();
-    if (!name) {
-      setNotice({ tone: "warning", title: "Session name is required" });
-      return;
-    }
-
+    const name = defaultSessionName();
     setOperation("create");
     try {
       const nextSnapshot = await request<TmuxSnapshot>("/api/sessions", {
         method: "POST",
-        body: cwd ? { name, cwd } : { name },
+        body: { name },
       });
       const createdSession = nextSnapshot.sessions.find((session) => session.name === name);
-      applySnapshot(nextSnapshot, { session: createdSession?.id });
+      const nextSelection = applySnapshot(nextSnapshot, { session: createdSession?.id });
       setNotice({ tone: "success", title: "Session created", body: name });
-      setNewSessionName(defaultSessionName());
-      setNewSessionCwd("");
-      setShowCreateSession(false);
       setTerminalStatus("loading");
       setView("manage");
+      void connectTerminalStream(nextSelection.pane);
     } catch (error) {
       setNotice({ tone: "danger", title: "Unable to create session", body: message(error) });
     } finally {
       setOperation(undefined);
     }
-  }, [applySnapshot, newSessionCwd, newSessionName]);
+  }, [applySnapshot, connectTerminalStream]);
 
-  const killActiveWindow = useCallback(async () => {
-    const windowToKill = currentWindows(snapshot, selection.session).find(
-      (window) => window.id === selection.window,
-    );
-
-    if (!windowToKill) {
-      setNotice({ tone: "warning", title: "No window selected" });
-      return;
-    }
-
-    setPendingKillWindow(windowToKill);
-  }, [selection.session, selection.window, snapshot]);
-
-  const confirmKillWindow = useCallback(async () => {
-    if (!pendingKillWindow) {
-      return;
-    }
-
-    setOperation("kill");
-    try {
-      await request(`/api/windows/${encodeURIComponent(pendingKillWindow.id)}`, {
-        method: "DELETE",
-      });
-      setNotice({ tone: "success", title: "Window killed", body: pendingKillWindow.name });
-      setPendingKillWindow(undefined);
-      await refresh("background");
-    } catch (error) {
-      setNotice({ tone: "danger", title: "Unable to kill window", body: message(error) });
-    } finally {
-      setOperation(undefined);
-    }
-  }, [pendingKillWindow, refresh]);
-
-  const splitPane = useCallback(
-    async (direction: "horizontal" | "vertical") => {
-      if (!selection.pane) {
-        setNotice({ tone: "warning", title: "No pane selected" });
-        return;
-      }
-
-      setOperation("split");
+  const deleteSession = useCallback(
+    async (sessionId: string) => {
+      setOperation("kill");
       try {
-        await request(`/api/panes/${encodeURIComponent(selection.pane)}/split`, {
-          method: "POST",
-          body: { direction },
-        });
-        setNotice({ tone: "success", title: "Pane split", body: direction });
-        await refresh("background");
+        await request(`/api/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+        setNotice({ tone: "success", title: "Session deleted" });
+        const nextSnapshot = await request<TmuxSnapshot>("/api/sessions");
+        applySnapshot(nextSnapshot, {});
+        setPreviewRun((run) => run + 1);
       } catch (error) {
-        setNotice({ tone: "danger", title: "Unable to split pane", body: message(error) });
+        setNotice({ tone: "danger", title: "Unable to delete session", body: message(error) });
       } finally {
         setOperation(undefined);
       }
     },
-    [refresh, selection.pane],
+    [applySnapshot],
   );
-
-  const configureApiToken = useCallback(() => {
-    setTokenDraft(localStorage.getItem(apiTokenStorageKey) ?? "");
-    setShowTokenSettings(true);
-  }, []);
-
-  const saveApiToken = useCallback(() => {
-    if (tokenDraft.trim()) {
-      localStorage.setItem(apiTokenStorageKey, tokenDraft.trim());
-      setNotice({ tone: "success", title: "API Token Saved" });
-    } else {
-      localStorage.removeItem(apiTokenStorageKey);
-      setNotice({ tone: "neutral", title: "API Token Cleared" });
-    }
-
-    setShowTokenSettings(false);
-    void refresh("background");
-  }, [refresh, tokenDraft]);
 
   const openSession = useCallback(
     (sessionId: string) => {
@@ -652,6 +407,27 @@ function App() {
     setPreviewRun((run) => run + 1);
   }, []);
 
+  const configureApiToken = useCallback(() => {
+    import("./api/client").then(({ apiTokenStorageKey }) => {
+      setTokenDraft(localStorage.getItem(apiTokenStorageKey) ?? "");
+      setShowTokenSettings(true);
+    });
+  }, []);
+
+  const saveApiToken = useCallback(() => {
+    import("./api/client").then(({ apiTokenStorageKey }) => {
+      if (tokenDraft.trim()) {
+        localStorage.setItem(apiTokenStorageKey, tokenDraft.trim());
+        setNotice({ tone: "success", title: "API Token Saved" });
+      } else {
+        localStorage.removeItem(apiTokenStorageKey);
+        setNotice({ tone: "neutral", title: "API Token Cleared" });
+      }
+      setShowTokenSettings(false);
+      void refresh("background");
+    });
+  }, [refresh, tokenDraft]);
+
   useEffect(() => {
     void refresh("initial");
   }, []);
@@ -661,10 +437,6 @@ function App() {
       terminalStream.current?.close();
       terminalStream.current = undefined;
       streamedPane.current = undefined;
-      // Dispose the xterm instance and clear refs so that when the user
-      // returns to the manage view a fresh terminal is created on the new
-      // DOM element. Without this, ensureTerminal skips creation because
-      // terminal.current is still set (to the now-unmounted instance).
       terminal.current?.dispose();
       terminal.current = undefined;
       terminalReady.current = undefined;
@@ -694,180 +466,8 @@ function App() {
     return () => terminalStream.current?.close();
   }, []);
 
-  // Dismiss context menu on any click outside the menu.
   useEffect(() => {
-    if (!contextMenu) return;
-    const handleMouseDown = (e: MouseEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (target && !target.closest(".terminal-context-menu")) {
-        setContextMenu(null);
-      }
-    };
-    document.addEventListener("mousedown", handleMouseDown, true);
-    return () => document.removeEventListener("mousedown", handleMouseDown, true);
-  }, [contextMenu]);
-
-  // Keyboard shortcuts for window/pane switching when the terminal is focused.
-  useEffect(() => {
-    if (view !== "manage") return;
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Close context menu on Escape
-      if (e.key === "Escape" && contextMenu) {
-        setContextMenu(null);
-        return;
-      }
-
-      // Only activate when the terminal area has focus, not when the
-      // input row or any form control is focused.
-      const active = document.activeElement;
-      if (
-        active instanceof HTMLInputElement ||
-        (active instanceof HTMLTextAreaElement &&
-          !active.classList.contains("xterm-helper-textarea")) ||
-        active instanceof HTMLSelectElement
-      ) {
-        return;
-      }
-
-      if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
-        // Alt+1..9: switch to window by index
-        if (e.key >= "1" && e.key <= "9") {
-          e.preventDefault();
-          const idx = Number.parseInt(e.key) - 1;
-          const win = windows[idx];
-          if (win) {
-            const pane = activeOrFirstPane(snapshot, win.id)?.id;
-            setSelection((prev) => ({ ...prev, window: win.id, pane }));
-            setTerminalStatus("loading");
-            void connectTerminalStream(pane);
-          }
-          return;
-        }
-
-        // Alt+ArrowLeft/Right: previous/next window
-        if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-          e.preventDefault();
-          const currentIdx = windows.findIndex((w) => w.id === selection.window);
-          if (currentIdx === -1 || windows.length <= 1) return;
-          const nextIdx =
-            e.key === "ArrowRight"
-              ? (currentIdx + 1) % windows.length
-              : (currentIdx - 1 + windows.length) % windows.length;
-          const win = windows[nextIdx];
-          if (win) {
-            const pane = activeOrFirstPane(snapshot, win.id)?.id;
-            setSelection((prev) => ({ ...prev, window: win.id, pane }));
-            setTerminalStatus("loading");
-            void connectTerminalStream(pane);
-          }
-        }
-        return;
-      }
-
-      // Ctrl+Alt+ArrowLeft/Right: previous/next pane in the current window
-      if (e.ctrlKey && e.altKey && !e.metaKey && !e.shiftKey) {
-        if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-          e.preventDefault();
-          const currentIdx = panes.findIndex((p) => p.id === selection.pane);
-          if (currentIdx === -1 || panes.length <= 1) return;
-          const nextIdx =
-            e.key === "ArrowRight"
-              ? (currentIdx + 1) % panes.length
-              : (currentIdx - 1 + panes.length) % panes.length;
-          const pane = panes[nextIdx];
-          if (pane) {
-            setSelection((prev) => ({ ...prev, pane: pane.id }));
-            setTerminalStatus("loading");
-            void connectTerminalStream(pane.id);
-          }
-        }
-      }
-
-      // Ctrl+K: focus the pane input line (avoiding conflict with
-      // Ctrl+L which terminals use for clear-screen / redraw).
-      if (e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && e.key === "k") {
-        e.preventDefault();
-        const input = document.querySelector<HTMLInputElement>('input[name="pane-input"]');
-        if (input) {
-          input.focus();
-          input.select();
-        }
-        return;
-      }
-
-      // Cmd+F or Ctrl+Shift+F: toggle terminal search
-      if (
-        (e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key === "f") ||
-        (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && e.key === "F")
-      ) {
-        e.preventDefault();
-        setShowSearch((prev) => !prev);
-        return;
-      }
-
-      // Font size controls: Cmd+=/Cmd+-/Cmd+0 (macOS) or Ctrl+=/Ctrl+-/Ctrl+0
-      const isFontSizeMod = e.metaKey || e.ctrlKey;
-      if (isFontSizeMod && !e.altKey && !e.shiftKey) {
-        if (e.key === "=" || e.key === "+") {
-          e.preventDefault();
-          setFontSizeState((prev) => {
-            const next = Math.min(prev + 1, 24);
-            localStorage.setItem("tmuapp.fontSize", String(next));
-            if (terminal.current) {
-              terminal.current.setFontSize(next);
-              terminalCellMetrics.current = undefined;
-              fitTerminalToContainer(terminal.current, terminalCellMetrics);
-            }
-            return next;
-          });
-          return;
-        }
-        if (e.key === "-") {
-          e.preventDefault();
-          setFontSizeState((prev) => {
-            const next = Math.max(prev - 1, 10);
-            localStorage.setItem("tmuapp.fontSize", String(next));
-            if (terminal.current) {
-              terminal.current.setFontSize(next);
-              terminalCellMetrics.current = undefined;
-              fitTerminalToContainer(terminal.current, terminalCellMetrics);
-            }
-            return next;
-          });
-          return;
-        }
-        if (e.key === "0") {
-          e.preventDefault();
-          const next = 14;
-          localStorage.setItem("tmuapp.fontSize", String(next));
-          setFontSizeState(next);
-          if (terminal.current) {
-            terminal.current.setFontSize(next);
-            terminalCellMetrics.current = undefined;
-            fitTerminalToContainer(terminal.current, terminalCellMetrics);
-          }
-          return;
-        }
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [view, windows, panes, selection, snapshot, connectTerminalStream, contextMenu]);
-
-  // Auto-focus the search input when the search bar opens.
-  useEffect(() => {
-    if (showSearch && searchInputRef.current) {
-      searchInputRef.current.focus();
-      searchInputRef.current.select();
-    }
-  }, [showSearch]);
-
-  useEffect(() => {
-    if (view !== "overview" || !snapshot) {
-      return;
-    }
+    if (view !== "overview" || !snapshot) return;
 
     let cancelled = false;
     const run = previewRun;
@@ -908,9 +508,7 @@ function App() {
         }
       }),
     ).then((entries) => {
-      if (cancelled || run !== previewRun) {
-        return;
-      }
+      if (cancelled || run !== previewRun) return;
       setSessionPreviews((current) => ({ ...current, ...Object.fromEntries(entries) }));
     });
 
@@ -919,80 +517,8 @@ function App() {
     };
   }, [previewRun, snapshot, view]);
 
-  const health = useMemo(() => {
-    if (status === "error") {
-      return { tone: "danger" as const, label: "offline" };
-    }
-    if (status === "loading" || status === "refreshing") {
-      return { tone: "warning" as const, label: "syncing" };
-    }
-    return { tone: "success" as const, label: "live" };
-  }, [status]);
-
   return (
     <div className="app-shell">
-      <a className="skip-link" href="#main-content">
-        Skip to Content
-      </a>
-      <header className="topbar">
-        <div className="brand" aria-label="tmuapp">
-          <span className="brand-mark" aria-hidden="true">
-            tm
-          </span>
-          <div>
-            <h1>tmuapp</h1>
-            <p>tmux fleet control</p>
-          </div>
-        </div>
-        {view === "manage" && selectedSession ? (
-          <div className="session-context">
-            <Button className="ghost" type="button" onPress={showOverview}>
-              Back
-            </Button>
-            <strong>{selectedSession.name}</strong>
-            <span>
-              {selectedSession.windows} windows ·{" "}
-              {panesForSession(snapshot, selectedSession.id).length} panes
-            </span>
-            <StatusChip tone={selectedSession.attached ? "success" : "warning"}>
-              {selectedSession.attached ? "attached" : "detached"}
-            </StatusChip>
-          </div>
-        ) : null}
-        <nav className="actions" aria-label="Global actions">
-          <StatusChip tone={health.tone}>{health.label}</StatusChip>
-          <Button
-            className="icon-button"
-            isDisabled={operation === "refresh"}
-            type="button"
-            onPress={() => void refresh("manual")}
-            aria-label="Refresh sessions"
-          >
-            {operation === "refresh" ? (
-              <Spinner size="sm" aria-label="Refreshing sessions" />
-            ) : (
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path
-                  d="M13.65 2.35A7.96 7.96 0 008 0a8 8 0 100 16 7.96 7.96 0 005.657-2.343 1 1 0 10-1.414-1.414A6 6 0 118 2a5.99 5.99 0 014.243 1.757L10.5 5.5H16V0l-2.35 2.35z"
-                  fill="currentColor"
-                />
-              </svg>
-            )}
-          </Button>
-          <Button className="ghost" type="button" onPress={configureApiToken}>
-            Token
-          </Button>
-          <Button
-            className="primary"
-            isDisabled={operation === "create"}
-            type="button"
-            onPress={openCreateSession}
-          >
-            {operation === "create" ? "Creating…" : "New Session"}
-          </Button>
-        </nav>
-      </header>
-
       <main id="main-content" className="workspace">
         {notice ? <NoticeBanner notice={notice} onDismiss={() => setNotice(undefined)} /> : null}
         {showTokenSettings ? (
@@ -1003,437 +529,56 @@ function App() {
             onTokenChange={setTokenDraft}
           />
         ) : null}
-        {pendingKillWindow ? (
-          <ConfirmWindowKill
-            isDeleting={operation === "kill"}
-            window={pendingKillWindow}
-            onCancel={() => setPendingKillWindow(undefined)}
-            onConfirm={() => void confirmKillWindow()}
+
+        {view === "overview" ? (
+          <SessionGrid
+            status={status}
+            sessions={sessions}
+            snapshot={snapshot}
+            selectedSession={selection.session}
+            previews={sessionPreviews}
+            isCreating={operation === "create"}
+            onRetry={() => void refresh("manual")}
+            onCreate={() => void createSession()}
+            onDelete={(id) => void deleteSession(id)}
+            onOpen={openSession}
           />
         ) : null}
 
-        {view === "overview" ? (
-          <section className="overview" aria-label="Session overview">
-            <div className="overview-head">
-              <div>
-                <h2>Sessions</h2>
-                <p>
-                  {sessions.length === 0
-                    ? "Create a tmux session and open it in the browser."
-                    : `${totalPanes} active panes across ${totalWindows} windows`}
-                </p>
-              </div>
-              <Chip className="count-pill">{sessions.length}</Chip>
-            </div>
-            {showCreateSession || sessions.length === 0 ? (
-              <SessionComposer
-                cwd={newSessionCwd}
-                isCreating={operation === "create"}
-                name={newSessionName}
-                onCancel={() => setShowCreateSession(false)}
-                onCwdChange={setNewSessionCwd}
-                onNameChange={setNewSessionName}
-                onSubmit={() => void createSession()}
-                showCancel={sessions.length > 0}
-              />
-            ) : null}
-            <SessionGrid
-              status={status}
-              sessions={sessions}
-              snapshot={snapshot}
-              selectedSession={selection.session}
-              previews={sessionPreviews}
-              onRetry={() => void refresh("manual")}
-              onCreate={openCreateSession}
-              onOpen={openSession}
-            />
-          </section>
-        ) : null}
-
         {view === "manage" ? (
-          <section className="manager" aria-label="Session manager">
-            <div className="manager-body">
-              <WindowStrip
-                windows={windows}
-                selectedWindow={selection.window}
-                snapshot={snapshot}
-                paneActivity={paneActivity.current}
-                onSelect={(windowId) => {
-                  const pane = activeOrFirstPane(snapshot, windowId)?.id;
-                  setSelection((current) => ({ ...current, window: windowId, pane }));
-                  setTerminalStatus("loading");
-                  void connectTerminalStream(pane);
-                }}
-              />
-
-              <div className="terminal-shell">
-                <div className="terminal-toolbar">
-                  <div>
-                    <h2 className="terminal-heading">
-                      {terminalStatus === "loading" || terminalStatus === "refreshing" ? (
-                        <span className="terminal-status-dot" aria-hidden="true" />
-                      ) : null}
-                      {selectedPane?.title || selectedPane?.currentCommand || "No pane selected"}
-                    </h2>
-                    <span>
-                      {selectedPane
-                        ? `${selectedPane.width}x${selectedPane.height} ${selectedPane.currentPath}`
-                        : "Create a pane or choose another window"}
-                    </span>
-                  </div>
-                  <div className="terminal-toolbar-center">
-                    <span className="font-size-control">
-                      <Button
-                        className="font-size-btn"
-                        type="button"
-                        aria-label="Decrease font size"
-                        isDisabled={fontSize <= 10}
-                        onPress={() => {
-                          const next = Math.max(fontSize - 1, 10);
-                          localStorage.setItem("tmuapp.fontSize", String(next));
-                          setFontSizeState(next);
-                          if (terminal.current) {
-                            terminal.current.setFontSize(next);
-                            terminalCellMetrics.current = undefined;
-                            fitTerminalToContainer(terminal.current, terminalCellMetrics);
-                          }
-                        }}
-                      >
-                        −
-                      </Button>
-                      <span className="font-size-value">{fontSize}px</span>
-                      <Button
-                        className="font-size-btn"
-                        type="button"
-                        aria-label="Increase font size"
-                        isDisabled={fontSize >= 24}
-                        onPress={() => {
-                          const next = Math.min(fontSize + 1, 24);
-                          localStorage.setItem("tmuapp.fontSize", String(next));
-                          setFontSizeState(next);
-                          if (terminal.current) {
-                            terminal.current.setFontSize(next);
-                            terminalCellMetrics.current = undefined;
-                            fitTerminalToContainer(terminal.current, terminalCellMetrics);
-                          }
-                        }}
-                      >
-                        +
-                      </Button>
-                    </span>
-                  </div>
-                  <div className="terminal-actions">
-                    <Button
-                      className="ghost"
-                      type="button"
-                      onPress={() => void splitPane("horizontal")}
-                      isDisabled={!selection.pane || operation === "split"}
-                    >
-                      Split H
-                    </Button>
-                    <Button
-                      className="ghost"
-                      type="button"
-                      onPress={() => void splitPane("vertical")}
-                      isDisabled={!selection.pane || operation === "split"}
-                    >
-                      Split V
-                    </Button>
-                    <Button
-                      className="danger"
-                      type="button"
-                      onPress={killActiveWindow}
-                      isDisabled={!selection.window || operation === "kill"}
-                    >
-                      Kill Window
-                    </Button>
-                  </div>
+          <section className="terminal-window" aria-label="Tmux terminal">
+            <header className="terminal-header">
+              <div className="terminal-header-left">
+                <Button className="terminal-back-button" type="button" onPress={showOverview}>
+                  <span aria-hidden="true">‹</span>
+                  BACK
+                </Button>
+                <div className="terminal-header-divider" />
+                <div className="terminal-title-group">
+                  <span className="online-dot" aria-hidden="true" />
+                  <span className="terminal-title">Tmux Terminal</span>
                 </div>
-
-                {showSearch ? (
-                  <div className="terminal-search">
-                    <input
-                      ref={searchInputRef}
-                      type="text"
-                      placeholder="Find"
-                      value={searchQuery}
-                      onChange={(e) => {
-                        const q = e.target.value;
-                        setSearchQuery(q);
-                        if (terminal.current?.searchAddon && q) {
-                          terminal.current.searchAddon.findNext(q, {
-                            caseSensitive: searchCaseSensitive,
-                            wholeWord: searchWholeWord,
-                            regex: searchRegex,
-                          });
-                        }
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Escape") {
-                          setShowSearch(false);
-                          setSearchQuery("");
-                          terminal.current?.focus();
-                        }
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          const addon = terminal.current?.searchAddon;
-                          if (!addon || !searchQuery) return;
-                          if (e.shiftKey) {
-                            addon.findPrevious(searchQuery, {
-                              caseSensitive: searchCaseSensitive,
-                              wholeWord: searchWholeWord,
-                              regex: searchRegex,
-                            });
-                          } else {
-                            addon.findNext(searchQuery, {
-                              caseSensitive: searchCaseSensitive,
-                              wholeWord: searchWholeWord,
-                              regex: searchRegex,
-                            });
-                          }
-                        }
-                      }}
-                    />
-                    {searchMatchCount > 0 ? (
-                      <span className="search-match-count">
-                        {searchMatchIndex + 1} of {searchMatchCount}
-                      </span>
-                    ) : null}
-                    <button
-                      className="search-btn"
-                      type="button"
-                      aria-label="Previous match"
-                      onClick={() =>
-                        terminal.current?.searchAddon?.findPrevious(searchQuery, {
-                          caseSensitive: searchCaseSensitive,
-                          wholeWord: searchWholeWord,
-                          regex: searchRegex,
-                        })
-                      }
-                    >
-                      ↑
-                    </button>
-                    <button
-                      className="search-btn"
-                      type="button"
-                      aria-label="Next match"
-                      onClick={() =>
-                        terminal.current?.searchAddon?.findNext(searchQuery, {
-                          caseSensitive: searchCaseSensitive,
-                          wholeWord: searchWholeWord,
-                          regex: searchRegex,
-                        })
-                      }
-                    >
-                      ↓
-                    </button>
-                    <button
-                      className={`search-btn${searchCaseSensitive ? " active" : ""}`}
-                      type="button"
-                      aria-label="Match case"
-                      title="Match Case"
-                      onClick={() => {
-                        setSearchCaseSensitive(!searchCaseSensitive);
-                        terminal.current?.searchAddon?.findNext(searchQuery, {
-                          caseSensitive: !searchCaseSensitive,
-                          wholeWord: searchWholeWord,
-                          regex: searchRegex,
-                        });
-                      }}
-                    >
-                      Aa
-                    </button>
-                    <button
-                      className={`search-btn${searchWholeWord ? " active" : ""}`}
-                      type="button"
-                      aria-label="Match whole word"
-                      title="Match Whole Word"
-                      onClick={() => {
-                        setSearchWholeWord(!searchWholeWord);
-                        terminal.current?.searchAddon?.findNext(searchQuery, {
-                          caseSensitive: searchCaseSensitive,
-                          wholeWord: !searchWholeWord,
-                          regex: searchRegex,
-                        });
-                      }}
-                    >
-                      Ab
-                    </button>
-                    <button
-                      className={`search-btn${searchRegex ? " active" : ""}`}
-                      type="button"
-                      aria-label="Use regular expression"
-                      title="Use Regular Expression"
-                      onClick={() => {
-                        setSearchRegex(!searchRegex);
-                        terminal.current?.searchAddon?.findNext(searchQuery, {
-                          caseSensitive: searchCaseSensitive,
-                          wholeWord: searchWholeWord,
-                          regex: !searchRegex,
-                        });
-                      }}
-                    >
-                      .*
-                    </button>
-                    <button
-                      className="search-btn close-btn"
-                      type="button"
-                      aria-label="Close search"
-                      onClick={() => {
-                        setShowSearch(false);
-                        setSearchQuery("");
-                        terminal.current?.focus();
-                      }}
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ) : null}
-
-                <div
-                  className={`terminal-wrap${terminalStatus === "loading" ? " switching" : ""}`}
-                  id="terminal-panel"
-                  role="tabpanel"
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    setContextMenu({ x: e.clientX, y: e.clientY });
-                  }}
-                >
-                  {terminalStatus === "loading" ? (
-                    <InlineLoading label="Preparing terminal…" />
-                  ) : null}
-                  <div
-                    ref={terminalElement}
-                    id="terminal"
-                    className="terminal"
-                    aria-label="tmux pane terminal"
-                  />
-                </div>
-
-                {contextMenu ? (
-                  <div
-                    className="terminal-context-menu"
-                    style={{ left: contextMenu.x, top: contextMenu.y }}
-                    role="menu"
-                    onClick={(e) => {
-                      // Let button clicks through but close on menu background click
-                      if (e.target === e.currentTarget) setContextMenu(null);
-                    }}
-                    onWheel={() => setContextMenu(null)}
-                  >
-                    <button
-                      type="button"
-                      disabled={
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        !(terminal.current?.element as any)?._xtermInstance?.getSelection?.()
-                      }
-                      onClick={() => {
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        const selection =
-                          (terminal.current?.element as any)?._xtermInstance?.getSelection?.() ??
-                          "";
-                        if (selection) void navigator.clipboard.writeText(selection);
-                        setContextMenu(null);
-                      }}
-                    >
-                      <span>Copy</span>
-                      <span className="context-menu-shortcut">⌘C</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        try {
-                          const text = await navigator.clipboard.readText();
-                          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                          (terminal.current?.element as any)?._xtermInstance?.paste(text);
-                        } catch {
-                          // clipboard read denied — silently ignore
-                        }
-                        setContextMenu(null);
-                      }}
-                    >
-                      <span>Paste</span>
-                      <span className="context-menu-shortcut">⌘V</span>
-                    </button>
-                    <div className="context-menu-separator" />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        (terminal.current?.element as any)?._xtermInstance?.selectAll();
-                        setContextMenu(null);
-                      }}
-                    >
-                      <span>Select All</span>
-                      <span className="context-menu-shortcut">⌘A</span>
-                    </button>
-                  </div>
-                ) : null}
-
-                <form
-                  className="input-row"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    followTerminalOutput(terminalElement.current, terminalShouldFollow);
-                    void sendInput(inputValue);
-                    setInputValue("");
-                  }}
-                >
-                  <span className="input-label">Send command to active pane</span>
-                  <Input
-                    className="pane-input"
-                    name="pane-input"
-                    aria-label="Pane input"
-                    autoComplete="off"
-                    placeholder={'printf "hello"…'}
-                    value={inputValue}
-                    onChange={(event) => setInputValue(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (
-                        event.key === "Tab" &&
-                        !event.shiftKey &&
-                        !event.ctrlKey &&
-                        !event.metaKey &&
-                        !event.altKey
-                      ) {
-                        event.preventDefault();
-                        void sendInputKey("Tab", inputValue);
-                      }
-                    }}
-                  />
-                  <Button
-                    className="primary"
-                    type="submit"
-                    isDisabled={!selection.pane || inputValue.length === 0}
-                  >
-                    {operation === "input" ? "Sending…" : "Run"}
-                  </Button>
-                  {panes.length > 1 ? (
-                    <Chip className="pane-count-pill">{panes.length}</Chip>
-                  ) : null}
-                </form>
               </div>
-
-              {panes.length > 1 ? (
-                <div className="pane-strip" role="tablist" aria-label="Panes">
-                  {panes.map((pane) => (
-                    <Button
-                      key={pane.id}
-                      className={`pane-tab ${pane.id === selection.pane ? "selected" : ""}`}
-                      aria-selected={pane.id === selection.pane}
-                      aria-controls="terminal-panel"
-                      type="button"
-                      onPress={() => {
-                        setSelection((current) => ({ ...current, pane: pane.id }));
-                        setTerminalStatus("loading");
-                        void connectTerminalStream(pane.id);
-                      }}
-                    >
-                      {pane.index}:{pane.title || pane.currentCommand || pane.id}
-                    </Button>
-                  ))}
-                </div>
-              ) : null}
+              <div className="terminal-session-id">
+                <span>Session:</span> {selectedSession?.id ?? selection.session ?? "unknown"}
+              </div>
+            </header>
+            <div className="terminal-body">
+              <div
+                className={`terminal-wrap${terminalStatus === "loading" ? " switching" : ""}`}
+                id="terminal-panel"
+                role="tabpanel"
+              >
+                {terminalStatus === "loading" ? (
+                  <InlineLoading label="Preparing terminal…" />
+                ) : null}
+                <div
+                  ref={terminalElement}
+                  id="terminal"
+                  className="terminal"
+                  aria-label="tmux pane terminal"
+                />
+              </div>
             </div>
           </section>
         ) : null}
@@ -1462,8 +607,16 @@ async function resizeActivePane(
   }
 }
 
-function resetTerminalSnapshot(term: TermAdapter) {
-  term.reset();
+function findPane(
+  snapshot: TmuxSnapshot | undefined,
+  paneId: string | undefined,
+): TmuxPane | undefined {
+  if (!snapshot || !paneId) return undefined;
+  for (const panes of Object.values(snapshot.panes)) {
+    const pane = panes.find((item) => item.id === paneId);
+    if (pane) return pane;
+  }
+  return undefined;
 }
 
 createRoot(document.querySelector<HTMLDivElement>("#app")!).render(<App />);
