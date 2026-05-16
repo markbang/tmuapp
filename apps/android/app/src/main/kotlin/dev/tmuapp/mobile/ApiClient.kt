@@ -132,7 +132,7 @@ class TmuappApiClient(
         onClose: () -> Unit,
     ): StreamConnection {
         val wsUrl = streamUrl(paneId)
-        val wsRequest = Builder().url(wsUrl).build()
+        val wsRequest = Request.Builder().url(wsUrl).build()
         var socket: WebSocket? = null
 
         val listener = object : WebSocketListener() {
