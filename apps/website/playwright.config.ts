@@ -6,9 +6,14 @@ export default defineConfig({
   expect: {
     timeout: 5_000,
   },
+  retries: process.env.CI ? 1 : 0,
+  workers: process.env.CI ? 1 : undefined,
   use: {
     baseURL: "http://127.0.0.1:5173",
     trace: "on-first-retry",
+    launchOptions: {
+      args: ["--disable-dev-shm-usage"],
+    },
   },
   webServer: {
     command: "pnpm exec vp dev",
