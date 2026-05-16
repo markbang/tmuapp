@@ -12,6 +12,7 @@ export function SessionGrid(props: {
   selectedSession: string | undefined;
   previews: Record<string, PreviewState>;
   isCreating: boolean;
+  onConfigureToken: () => void;
   onRetry: () => void;
   onCreate: () => void;
   onDelete: (sessionId: string) => void;
@@ -44,6 +45,9 @@ export function SessionGrid(props: {
         <div className="dashboard-actions">
           <MetricBar label="CPU" value={cpuUsage} />
           <MetricBar label="MEM" value={memUsage} />
+          <Button className="dashboard-token-button" type="button" onPress={props.onConfigureToken}>
+            Token
+          </Button>
           <Button
             className="dashboard-new-button"
             type="button"

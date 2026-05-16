@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { TmuxPane, TmuxSnapshot } from "utils";
 import "./style.css";
-import { apiLabel, request, streamUrl } from "./api/client";
+import { apiLabel, apiTokenStorageKey, request, streamUrl } from "./api/client";
 import { InlineLoading } from "./components/InlineLoading";
 import { NoticeBanner } from "./components/NoticeBanner";
 import { SessionGrid } from "./components/SessionGrid";
@@ -48,7 +48,9 @@ function App() {
   const [notice, setNotice] = useState<Notice>();
   const [operation, setOperation] = useState<Operation>();
   const [showTokenSettings, setShowTokenSettings] = useState(false);
-  const [tokenDraft, setTokenDraft] = useState(() => "");
+  const [tokenDraft, setTokenDraft] = useState(
+    () => localStorage.getItem(apiTokenStorageKey) ?? "",
+  );
   const [previewRun, setPreviewRun] = useState(0);
   const [sessionPreviews, setSessionPreviews] = useState<Record<string, PreviewState>>({});
   const [, setFitSize] = useState("pending");
@@ -401,18 +403,21 @@ function App() {
     setPreviewRun((run) => run + 1);
   }, []);
 
+  const configureApiToken = useCallback(() => {
+    setTokenDraft(localStorage.getItem(apiTokenStorageKey) ?? "");
+    setShowTokenSettings(true);
+  }, []);
+
   const saveApiToken = useCallback(() => {
-    import("./api/client").then(({ apiTokenStorageKey }) => {
-      if (tokenDraft.trim()) {
-        localStorage.setItem(apiTokenStorageKey, tokenDraft.trim());
-        setNotice({ tone: "success", title: "API Token Saved" });
-      } else {
-        localStorage.removeItem(apiTokenStorageKey);
-        setNotice({ tone: "neutral", title: "API Token Cleared" });
-      }
-      setShowTokenSettings(false);
-      void refresh("background");
-    });
+    if (tokenDraft.trim()) {
+      localStorage.setItem(apiTokenStorageKey, tokenDraft.trim());
+      setNotice({ tone: "success", title: "API Token Saved" });
+    } else {
+      localStorage.removeItem(apiTokenStorageKey);
+      setNotice({ tone: "neutral", title: "API Token Cleared" });
+    }
+    setShowTokenSettings(false);
+    void refresh("background");
   }, [refresh, tokenDraft]);
 
   useEffect(() => {
@@ -525,6 +530,7 @@ function App() {
             selectedSession={selection.session}
             previews={sessionPreviews}
             isCreating={operation === "create"}
+            onConfigureToken={configureApiToken}
             onRetry={() => void refresh("manual")}
             onCreate={() => void createSession()}
             onDelete={(id) => void deleteSession(id)}

@@ -1,96 +1,58 @@
 @media (max-width: 980px) {
-  .app-shell {
-    grid-template-rows: auto minmax(0, 1fr);
-  }
-
-  .topbar {
-    min-height: 64px;
+  .dashboard-header,
+  .terminal-header {
+    min-height: 56px;
+    height: auto;
     flex-wrap: wrap;
     padding: 10px;
   }
 
-  .overview {
-    padding: 14px;
+  .dashboard-heading,
+  .terminal-header-left {
+    gap: 14px;
   }
 
-  .session-composer {
-    grid-template-columns: 1fr 1fr;
+  .dashboard-actions {
+    gap: 14px;
   }
 
-  .composer-copy,
-  .composer-actions {
-    grid-column: 1 / -1;
-  }
-
-  .manager-body {
-    grid-template-rows: 50px minmax(60svh, 1fr) 54px auto;
-  }
-
-  .terminal-toolbar {
-    height: auto;
-    min-height: 42px;
-    align-items: start;
-    flex-direction: column;
-    padding: 8px 10px;
-  }
-
-  .terminal-actions {
-    width: 100%;
-    overflow-x: auto;
-  }
-
-  .input-label {
+  .metric-bar {
     display: none;
-  }
-
-  .session-context {
-    order: 3;
-    width: 100%;
   }
 }
 
 @media (max-width: 560px) {
-  .actions {
+  .dashboard-actions {
     width: 100%;
     justify-content: flex-end;
-    flex-wrap: wrap;
   }
 
-  .overview-head {
-    align-items: start;
-    flex-direction: column;
+  .dashboard-main {
+    padding: 14px;
   }
 
-  .session-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .session-composer {
-    grid-template-columns: 1fr;
-  }
-
-  .composer-actions {
-    justify-content: stretch;
-  }
-
-  .composer-actions button {
-    width: 100%;
-  }
-
-  .terminal-shell {
-    grid-template-rows: auto minmax(320px, 1fr) auto;
-  }
-
-  .input-row {
-    flex-wrap: wrap;
-  }
-
-  .input-label {
+  .dashboard-kicker,
+  .dashboard-divider,
+  .footer-status span:first-child,
+  .terminal-header-divider {
     display: none;
   }
 
-  .pane-input {
-    flex: 1 1 100%;
+  .dashboard-footer {
+    gap: 8px;
+    padding: 0 10px;
+  }
+
+  .footer-status {
+    gap: 8px;
+  }
+
+  .terminal-session-id {
+    width: 100%;
+  }
+
+  .terminal-wrap {
+    padding: 12px;
   }
 
   .notice {
@@ -112,10 +74,6 @@
   .panel-actions {
     flex-direction: column-reverse;
   }
-
-  .pane-strip {
-    flex-wrap: wrap;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -127,23 +85,8 @@
     transition-duration: 1ms !important;
   }
 
-  .session-card:hover,
-  .session-card:active,
-  .primary:active,
-  .ghost:active,
-  .danger:active,
-  .window-tab:active,
-  .pane-tab:active {
-    transform: none;
-  }
-
   [class*="spinner"],
   [class*="Spinner"] {
     animation: none !important;
-  }
-
-  .terminal-status-dot {
-    animation: none !important;
-    opacity: 1;
   }
 }

@@ -59,11 +59,11 @@ export function createTerminal(element: HTMLElement, options: TermAdapterOptions
     wordSeparator: " ()[]{}\",'`~!@#$%^&*-+=|\\:;<>.?/",
     macOptionIsMeta: false,
     theme: {
-      background: "#010102",
-      foreground: "#f7f8f8",
-      cursor: "#5e6ad2",
-      cursorAccent: "#010102",
-      selectionBackground: "#264f78",
+      background: "#050505",
+      foreground: "#cbd5e1",
+      cursor: "#4ade80",
+      cursorAccent: "#050505",
+      selectionBackground: "rgba(99, 102, 241, 0.3)",
       black: "#1e1e1e",
       red: "#f44747",
       green: "#6a9955",
@@ -179,7 +179,7 @@ export function createTerminal(element: HTMLElement, options: TermAdapterOptions
       term.open(element);
       opened = true;
 
-      // Auto-copy selected text to clipboard with a brief lavender flash
+      // Auto-copy selected text to clipboard with a brief indigo flash
       // as confirmation — matches native terminal behaviour.
       term.onSelectionChange(() => {
         const selected = term.getSelection();

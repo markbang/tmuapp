@@ -1,54 +1,55 @@
 :root {
-  --primary: #5e6ad2;
-  --primary-hover: #828fff;
-  --primary-focus: #5e69d1;
-  --ink: #f7f8f8;
-  --ink-muted: #d0d6e0;
-  --ink-subtle: #a1a7b0;
-  --ink-tertiary: #8f96a0;
-  --canvas: #010102;
-  --surface-1: #0f1011;
-  --surface-2: #141516;
-  --surface-3: #18191a;
-  --surface-4: #191a1b;
-  --hairline: #23252a;
-  --hairline-strong: #34343a;
-  --hairline-tertiary: #3e3e44;
-  --danger: #ff6b6b;
-  --danger-bg: rgba(255, 107, 107, 0.12);
-  --success: #27a644;
-  --success-bg: rgba(39, 166, 68, 0.18);
+  --primary: #6366f1;
+  --primary-hover: #818cf8;
+  --primary-focus: #6366f1;
+  --ink: #f8fafc;
+  --ink-muted: #cbd5e1;
+  --ink-subtle: #94a3b8;
+  --ink-tertiary: #64748b;
+  --canvas: #0f1117;
+  --surface-1: #16191f;
+  --surface-2: #1e222a;
+  --surface-3: #2d333f;
+  --surface-4: #1a1d23;
+  --terminal-bg: #050505;
+  --hairline: #2d333f;
+  --hairline-strong: #374151;
+  --hairline-tertiary: #475569;
+  --danger: #f87171;
+  --danger-bg: rgba(248, 113, 113, 0.12);
+  --success: #22c55e;
+  --success-bg: rgba(34, 197, 94, 0.18);
   --warning: #d99a2b;
   --warning-bg: rgba(217, 154, 43, 0.16);
-  --primary-dim-border: rgba(94, 106, 210, 0.58);
-  --primary-subtle-border: rgba(94, 106, 210, 0.55);
-  --primary-subtle-bg: rgba(94, 106, 210, 0.16);
-  --primary-focus-ring: rgba(94, 106, 210, 0.45);
-  --primary-focus-border: rgba(130, 143, 255, 0.66);
-  --primary-focus-shadow: rgba(94, 106, 210, 0.22);
-  --danger-hover-border: rgba(255, 107, 107, 0.62);
-  --danger-hover-bg: rgba(255, 107, 107, 0.1);
-  --danger-dim-border: rgba(255, 107, 107, 0.42);
-  --danger-dim-bg: rgba(255, 107, 107, 0.08);
-  --danger-panel-border: rgba(255, 107, 107, 0.38);
-  --danger-notice-border: rgba(255, 107, 107, 0.4);
-  --danger-empty-border: rgba(255, 107, 107, 0.35);
-  --danger-text: #ff8a8a;
-  --success-text: #c8f7d2;
+  --primary-dim-border: rgba(99, 102, 241, 0.72);
+  --primary-subtle-border: rgba(99, 102, 241, 0.55);
+  --primary-subtle-bg: rgba(99, 102, 241, 0.16);
+  --primary-focus-ring: rgba(99, 102, 241, 0.48);
+  --primary-focus-border: rgba(129, 140, 248, 0.72);
+  --primary-focus-shadow: rgba(99, 102, 241, 0.24);
+  --danger-hover-border: rgba(248, 113, 113, 0.62);
+  --danger-hover-bg: rgba(248, 113, 113, 0.1);
+  --danger-dim-border: rgba(248, 113, 113, 0.42);
+  --danger-dim-bg: rgba(248, 113, 113, 0.08);
+  --danger-panel-border: rgba(248, 113, 113, 0.38);
+  --danger-notice-border: rgba(248, 113, 113, 0.4);
+  --danger-empty-border: rgba(248, 113, 113, 0.35);
+  --danger-text: #fca5a5;
+  --success-text: #bbf7d0;
   --warning-text: #ffe2a8;
-  --danger-text-status: #ffb8b8;
+  --danger-text-status: #fecaca;
   --skeleton-shine: var(--surface-3);
-  --preview-bg: color-mix(in srgb, var(--canvas) 95%, var(--surface-1) 5%);
-  --preview-text: #d8dee9;
+  --preview-bg: var(--terminal-bg);
+  --preview-text: #cbd5e1;
   --danger-surface: #1a1112;
-  --primary-focus-outline: rgba(94, 106, 210, 0.8);
-  --terminal-overlay: rgba(15, 16, 17, 0.85);
-  --modal-backdrop: rgba(1, 1, 2, 0.62);
+  --primary-focus-outline: rgba(99, 102, 241, 0.8);
+  --terminal-overlay: rgba(5, 5, 5, 0.82);
+  --modal-backdrop: rgba(15, 17, 23, 0.62);
   --white: #fff;
   --font:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  color: var(--ink);
+  --mono: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  color: var(--ink-muted);
   background: var(--canvas);
   font: 14px/1.5 var(--font);
   font-synthesis: none;
@@ -57,14 +58,3 @@
   -moz-osx-font-smoothing: grayscale;
   color-scheme: dark;
 }
-
-/*
- * Surface ladder (darkest → lightest):
- *   canvas (#010102) → surface-1 (#0f1011) → surface-2 (#141516)
- *   → surface-3 (#18191a) → surface-4 (#191a1b)
- *
- * Primary accent opacity scale:
- *   0.16 (subtle bg)  → 0.22 (focus shadow) → 0.45 (focus ring)
- *   → 0.55 (subtle border) → 0.58 (dim border) → 0.66 (focus border)
- *   → 0.80 (focus outline)
- */
