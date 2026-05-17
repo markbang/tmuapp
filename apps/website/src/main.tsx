@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import type { TmuxPane, TmuxSnapshot } from "utils";
 import "./style.css";
 import { apiLabel, apiTokenStorageKey, request, streamUrl } from "./api/client";
+import { detectAgentState } from "./agent-detector";
 import { InlineLoading } from "./components/InlineLoading";
 import { NoticeBanner } from "./components/NoticeBanner";
 import { SessionGrid } from "./components/SessionGrid";
@@ -215,12 +216,34 @@ function App() {
       }
 
       const pane = findPane(snapshot, paneId);
-      const term = await ensureTerminal(pane?.width, pane?.height);
-      if (!term) return;
+      const terminalInstance = await ensureTerminal(pane?.width, pane?.height);
+      if (!terminalInstance) return;
 
-      term.reset();
+      terminalInstance.reset();
       setTerminalStatus("loading");
-      await resizeActivePane(paneId, term.cols, term.rows, setOperation, setFitSize);
+      await resizeActivePane(
+        paneId,
+        terminalInstance.cols,
+        terminalInstance.rows,
+        setOperation,
+        setFitSize,
+      );
+
+      connectWebSocket(paneId, terminalInstance);
+    },
+    [ensureTerminal, refreshActivePane, renderTerminalText, selection.pane, snapshot, view],
+  );
+
+  // WebSocket reconnect state
+  const reconnectAttemptRef = useRef(0);
+  const reconnectTimerRef = useRef<number | undefined>(undefined);
+
+  const connectWebSocket = useCallback(
+    (paneId: string, term: TermAdapter, isReconnect = false) => {
+      if (!isReconnect) {
+        reconnectAttemptRef.current = 0;
+        window.clearTimeout(reconnectTimerRef.current);
+      }
 
       const socket = new WebSocket(streamUrl(`/api/panes/${encodeURIComponent(paneId)}/stream`));
       let receivedOutput = false;
@@ -229,13 +252,14 @@ function App() {
           socket.close();
           terminalStream.current = undefined;
           streamedPane.current = undefined;
-          void refreshActivePane(paneId);
+          if (!isReconnect) void refreshActivePane(paneId);
         }
       }, 3000);
       terminalStream.current = socket;
       streamedPane.current = paneId;
 
       socket.addEventListener("open", () => {
+        reconnectAttemptRef.current = 0;
         setTerminalStatus("idle");
         sendTerminalResize(socket, term.cols, term.rows);
       });
@@ -253,6 +277,8 @@ function App() {
           scrollTerminalToBottomIfFollowing(term.element, shouldFollow);
           return;
         }
+
+        if (payload.type === "ping") return;
 
         if (!receivedOutput) {
           window.clearTimeout(fallbackTimer);
@@ -274,7 +300,7 @@ function App() {
         if (!receivedOutput) {
           terminalStream.current = undefined;
           streamedPane.current = undefined;
-          void refreshActivePane(paneId);
+          if (!isReconnect) void refreshActivePane(paneId);
           return;
         }
         setTerminalStatus("error");
@@ -283,10 +309,26 @@ function App() {
 
       socket.addEventListener("close", () => {
         window.clearTimeout(fallbackTimer);
-        if (terminalStream.current === socket) terminalStream.current = undefined;
+        if (terminalStream.current !== socket) return;
+        terminalStream.current = undefined;
+
+        if (receivedOutput && reconnectAttemptRef.current < 5) {
+          reconnectAttemptRef.current += 1;
+          const delay = Math.min(1000 * 2 ** (reconnectAttemptRef.current - 1), 30_000);
+          setTerminalStatus("refreshing");
+          setNotice({
+            tone: "warning",
+            title: `Reconnecting… (${reconnectAttemptRef.current}/5)`,
+          });
+          reconnectTimerRef.current = window.setTimeout(async () => {
+            setNotice(undefined);
+            await refreshActivePane(paneId);
+            connectWebSocket(paneId, term, true);
+          }, delay);
+        }
       });
     },
-    [ensureTerminal, refreshActivePane, renderTerminalText, selection.pane, snapshot, view],
+    [refreshActivePane],
   );
 
   const refresh = useCallback(
@@ -573,6 +615,41 @@ function App() {
                 />
               </div>
             </div>
+            {(() => {
+              const pane = findPane(snapshot, selection.pane);
+              const preview = sessionPreviews[selection.session ?? ""];
+              const detected = detectAgentState(pane?.currentCommand ?? "", preview?.text ?? "");
+              if (detected.state !== "waiting_input" && detected.state !== "unknown") return null;
+              return (
+                <div className="quick-reply-bar">
+                  <QuickReplyButton
+                    label="Y"
+                    title="Send 'y'"
+                    onPress={() => void sendTerminalData("y")}
+                  />
+                  <QuickReplyButton
+                    label="N"
+                    title="Send 'n'"
+                    onPress={() => void sendTerminalData("n")}
+                  />
+                  <QuickReplyButton
+                    label="↵"
+                    title="Send Enter"
+                    onPress={() => void sendTerminalData("\r")}
+                  />
+                  <QuickReplyButton
+                    label="^C"
+                    title="Send Ctrl+C"
+                    onPress={() => void sendTerminalData("\x03")}
+                  />
+                  <QuickReplyButton
+                    label="^D"
+                    title="Send Ctrl+D"
+                    onPress={() => void sendTerminalData("\x04")}
+                  />
+                </div>
+              );
+            })()}
           </section>
         ) : null}
       </main>
@@ -610,6 +687,14 @@ function findPane(
     if (pane) return pane;
   }
   return undefined;
+}
+
+function QuickReplyButton(props: { label: string; title: string; onPress: () => void }) {
+  return (
+    <button className="quick-reply-btn" type="button" title={props.title} onClick={props.onPress}>
+      {props.label}
+    </button>
+  );
 }
 
 createRoot(document.querySelector<HTMLDivElement>("#app")!).render(<App />);

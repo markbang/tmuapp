@@ -87,6 +87,7 @@ private const val LastCrash = "lastCrash"
 private const val AppPrefs = "tmuapp.android"
 private const val PrefApiBase = "apiBase"
 private const val PrefApiToken = "apiToken"
+private const val PrefReadOnly = "readOnly"
 
 class MainActivity : ComponentActivity() {
     private val crashPrefs by lazy { getSharedPreferences(CrashPrefs, Context.MODE_PRIVATE) }
@@ -162,6 +163,8 @@ private fun TmuxApp(window: android.view.Window, prefs: android.content.SharedPr
     var apiToken by rememberSaveable { mutableStateOf(prefs.getString(PrefApiToken, "") ?: "") }
     var configured by rememberSaveable { mutableStateOf(apiBase.trim().isNotBlank()) }
     var activeSessionId by rememberSaveable { mutableStateOf<String?>(null) }
+    var readOnly by rememberSaveable { mutableStateOf(prefs.getBoolean(PrefReadOnly, false)) }
+    var deleteTarget by rememberSaveable { mutableStateOf<String?>(null) }
     var snapshot by remember { mutableStateOf(TmuxSnapshot()) }
     var status by remember { mutableStateOf(AsyncStatus.Idle) }
     var notice by remember { mutableStateOf<String?>(null) }
@@ -226,6 +229,12 @@ private fun TmuxApp(window: android.view.Window, prefs: android.content.SharedPr
     }
 
     fun deleteSession(id: String) {
+        deleteTarget = id
+    }
+
+    fun confirmDelete() {
+        val id = deleteTarget ?: return
+        deleteTarget = null
         operation = Operation.Delete
         scope.launch {
             try {
@@ -274,6 +283,7 @@ private fun TmuxApp(window: android.view.Window, prefs: android.content.SharedPr
         if (activeSessionId != null) {
             TerminalScreen(
                 sessionId = activeSessionId!!,
+                snapshot = snapshot,
                 client = client,
                 onBack = { activeSessionId = null },
             )
@@ -282,10 +292,41 @@ private fun TmuxApp(window: android.view.Window, prefs: android.content.SharedPr
                 sessions = snapshot.sessions,
                 status = status,
                 operation = operation,
+                readOnly = readOnly,
+                onToggleReadOnly = {
+                    readOnly = it
+                    prefs.edit().putBoolean(PrefReadOnly, it).apply()
+                },
                 onRefresh = { refresh() },
-                onCreate = { createSession() },
+                onCreate = {
+                    if (readOnly) notice = "Read-only mode"
+                    else createSession()
+                },
                 onDelete = { deleteSession(it) },
                 onSelect = { activeSessionId = it },
+            )
+        }
+
+        // Delete confirmation dialog
+        deleteTarget?.let { targetId ->
+            val name = snapshot.sessions.find { it.id == targetId }?.name ?: targetId
+            AlertDialog(
+                onDismissRequest = { deleteTarget = null },
+                title = { androidx.compose.material3.Text("Delete session $name?", color = TextPrimary) },
+                text = { androidx.compose.material3.Text("This cannot be undone.", color = TextMuted, fontSize = 13.sp) },
+                confirmButton = {
+                    androidx.compose.material3.Text(
+                        "DELETE", color = Color(0xFFEF4444), fontWeight = FontWeight.Bold,
+                        modifier = Modifier.clickable { confirmDelete() }.padding(8.dp),
+                    )
+                },
+                dismissButton = {
+                    androidx.compose.material3.Text(
+                        "CANCEL", color = TextMuted,
+                        modifier = Modifier.clickable { deleteTarget = null }.padding(8.dp),
+                    )
+                },
+                containerColor = CardHeaderColor,
             )
         }
     }
@@ -337,6 +378,8 @@ private fun Dashboard(
     sessions: List<TmuxSession>,
     status: AsyncStatus,
     operation: Operation?,
+    readOnly: Boolean,
+    onToggleReadOnly: (Boolean) -> Unit,
     onRefresh: () -> Unit,
     onCreate: () -> Unit,
     onDelete: (String) -> Unit,
@@ -362,13 +405,35 @@ private fun Dashboard(
                     letterSpacing = 1.sp,
                 )
             }
-            PrimaryButton(
-                label = "NEW",
-                enabled = operation != Operation.Create,
-                onClick = onCreate,
-                height = 32.dp,
-                fontSize = 12.sp,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // Read-only toggle
+                androidx.compose.material3.Text(
+                    "READ", color = if (readOnly) AccentColor else TextMuted,
+                    fontSize = 10.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold,
+                )
+                Spacer(Modifier.width(4.dp))
+                androidx.compose.material3.Switch(
+                    checked = readOnly,
+                    onCheckedChange = onToggleReadOnly,
+                    colors = androidx.compose.material3.SwitchDefaults.colors(
+                        checkedThumbColor = White,
+                        checkedTrackColor = AccentColor,
+                        uncheckedThumbColor = TextMuted,
+                        uncheckedTrackColor = BorderColor,
+                    ),
+                    modifier = Modifier.height(20.dp),
+                )
+                Spacer(Modifier.width(12.dp))
+                if (!readOnly) {
+                    PrimaryButton(
+                        label = "NEW",
+                        enabled = operation != Operation.Create,
+                        onClick = onCreate,
+                        height = 32.dp,
+                        fontSize = 12.sp,
+                    )
+                }
+            }
         }
 
         // Content
@@ -410,6 +475,7 @@ private fun Dashboard(
                             index = index,
                             name = session.name,
                             attached = session.attached,
+                            readOnly = readOnly,
                             onClick = { onSelect(session.id) },
                             onDelete = { onDelete(session.id) },
                         )
@@ -451,8 +517,13 @@ private fun Dashboard(
 @Composable
 private fun SessionCard(
     index: Int, name: String, attached: Boolean,
+    readOnly: Boolean = false,
     onClick: () -> Unit, onDelete: () -> Unit,
 ) {
+    val isAgent = name.contains("pi", ignoreCase = true) ||
+        name.contains("codex", ignoreCase = true) ||
+        name.contains("claude", ignoreCase = true)
+
     Column(
         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
             .background(CardColor).border(1.dp, BorderColor, RoundedCornerShape(8.dp))
@@ -469,21 +540,45 @@ private fun SessionCard(
                 fontFamily = FontFamily.Monospace, fontSize = 10.sp,
                 maxLines = 1, modifier = Modifier.weight(1f),
             )
-            if (attached) {
-                Box(
-                    Modifier.background(AccentColor, RoundedCornerShape(4.dp))
-                        .padding(horizontal = 4.dp, vertical = 2.dp),
-                ) {
-                    androidx.compose.material3.Text(
-                        "ACTIVE", color = White, fontSize = 8.sp,
-                        fontWeight = FontWeight.Bold,
-                    )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (isAgent) {
+                    Box(
+                        Modifier.background(GreenColor.copy(alpha = 0.15f), RoundedCornerShape(4.dp))
+                            .padding(horizontal = 4.dp, vertical = 2.dp),
+                    ) {
+                        androidx.compose.material3.Text(
+                            "AGENT", color = GreenColor, fontSize = 8.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                    Spacer(Modifier.width(4.dp))
                 }
-            } else {
-                androidx.compose.material3.Text(
-                    "✕", color = TextMuted, fontSize = 14.sp,
-                    modifier = Modifier.clickable { onDelete() },
-                )
+                if (attached) {
+                    Box(
+                        Modifier.background(AccentColor, RoundedCornerShape(4.dp))
+                            .padding(horizontal = 4.dp, vertical = 2.dp),
+                    ) {
+                        androidx.compose.material3.Text(
+                            "ACTIVE", color = White, fontSize = 8.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(6.dp).clip(CircleShape).background(TextMuted))
+                        Spacer(Modifier.width(4.dp))
+                        androidx.compose.material3.Text(
+                            "detached", color = TextMuted, fontSize = 8.sp,
+                        )
+                    }
+                    if (!readOnly) {
+                        Spacer(Modifier.width(6.dp))
+                        androidx.compose.material3.Text(
+                            "✕", color = TextMuted, fontSize = 14.sp,
+                            modifier = Modifier.clickable { onDelete() },
+                        )
+                    }
+                }
             }
         }
 
@@ -539,11 +634,11 @@ private fun CreateCard(onClick: () -> Unit) {
 @Composable
 private fun TerminalScreen(
     sessionId: String,
+    snapshot: TmuxSnapshot,
     client: TmuappApiClient,
     onBack: () -> Unit,
 ) {
     // Find the active pane for this session
-    var snapshot by remember { mutableStateOf(TmuxSnapshot()) }
     var ansi by remember { mutableStateOf("") }
     var streamConn by remember { mutableStateOf<StreamConnection?>(null) }
     val scope = rememberCoroutineScope()
@@ -603,11 +698,66 @@ private fun TerminalScreen(
             )
         }
 
+        // Quick command bar
+        QuickCommandBar { cmd ->
+            // Send via either the stream or HTTP
+            val conn = streamConn
+            if (conn?.isOpen == true) {
+                conn.sendInput(cmd)
+            } else {
+                // Find first pane and send via HTTP
+                scope.launch {
+                    try {
+                        val windows = snapshot.windows[sessionId].orEmpty()
+                        val w = windows.firstOrNull { it.active } ?: windows.firstOrNull()
+                        val panes = w?.let { snapshot.panes[it.id].orEmpty() }.orEmpty()
+                        val pane = panes.firstOrNull { it.active } ?: panes.firstOrNull()
+                        if (pane != null) {
+                            client.sendInput(pane.id, cmd)
+                            client.sendEnter(pane.id)
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+        }
+
         // Terminal WebView
         TerminalWebView(
             ansi = ansi,
             onInput = { data -> streamConn?.sendInput(data) },
             modifier = Modifier.fillMaxSize(),
+        )
+    }
+}
+
+// ── Quick command bar ──
+@Composable
+private fun QuickCommandBar(onCommand: (String) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().background(CardHeaderColor)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        QuickBtn("Y", "\u0079", onCommand)
+        QuickBtn("N", "\u006E", onCommand)
+        QuickBtn("⏎", "\r", onCommand)
+        QuickBtn("⌃C", "\u0003", onCommand)
+        QuickBtn("⌃D", "\u0004", onCommand)
+    }
+}
+
+@Composable
+private fun QuickBtn(label: String, data: String, onCommand: (String) -> Unit) {
+    Box(
+        modifier = Modifier.height(36.dp).clip(RoundedCornerShape(6.dp))
+            .background(AccentColor).clickable { onCommand(data) }
+            .padding(horizontal = 14.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        androidx.compose.material3.Text(
+            label, color = White, fontSize = 13.sp,
+            fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold,
         )
     }
 }

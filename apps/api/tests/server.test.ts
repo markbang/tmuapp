@@ -77,7 +77,9 @@ async function startTestServer(
   };
 
   server = createApiServer({
-    authToken: options.authToken,
+    tokenConfig: options.authToken
+      ? { admin: [options.authToken], write: [options.authToken], read: [options.authToken] }
+      : undefined,
     runTmux,
     runTmuxStream: options.stream?.run,
     staticDir: options.staticDir,

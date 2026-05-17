@@ -3,12 +3,22 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { WebSocketServer, type WebSocket } from "ws";
 import { dirname, extname, join, normalize } from "node:path";
 import { fileURLToPath, URL } from "node:url";
+import { auditLog } from "./audit.js";
 import { buildSendKeysArgs, createTmuxService, runTmux, type TmuxRunner } from "./tmux.js";
 import { sanitizeTarget } from "utils";
 import { createTmuxStream, type TmuxStreamRunner } from "./tmux-stream.js";
 
+export type TokenLevel = "admin" | "write" | "read";
+
+export type TokenConfig = {
+  admin: string[];
+  write: string[];
+  read: string[];
+};
+
 export type ApiServerOptions = {
-  authToken?: string;
+  tokenConfig?: TokenConfig;
+  corsOrigin?: string;
   runTmux?: TmuxRunner;
   runTmuxStream?: TmuxStreamRunner;
   staticDir?: string;
@@ -20,7 +30,59 @@ const defaultStaticDir = join(dirname(fileURLToPath(import.meta.url)), "../../we
 export function createApiServer(options: ApiServerOptions = {}) {
   const tmux = createTmuxService(options.runTmux);
   const staticDir = options.staticDir ?? defaultStaticDir;
-  const authToken = options.authToken?.trim();
+  const tokenConfig = options.tokenConfig ?? { admin: [], write: [], read: [] };
+  const corsOrigin = options.corsOrigin ?? "";
+
+  const tokenLevel = (token: string | undefined): TokenLevel | null => {
+    if (!token) return null;
+    if (tokenConfig.admin.includes(token)) return "admin";
+    if (tokenConfig.write.includes(token)) return "write";
+    if (tokenConfig.read.includes(token)) return "read";
+    return null;
+  };
+
+  const authError = (response: ServerResponse) => send(response, 401, { error: "Unauthorized" });
+
+  const forbidden = (response: ServerResponse) =>
+    send(response, 403, { error: "Insufficient permissions" });
+
+  const extractToken = (request: IncomingMessage, queryToken?: string | null) => {
+    const auth = request.headers.authorization;
+    if (auth?.startsWith("Bearer ")) return auth.slice(7);
+    const header = request.headers["x-tmuapp-token"];
+    if (typeof header === "string") return header;
+    return queryToken ?? undefined;
+  };
+
+  const requireAuth = (
+    request: IncomingMessage,
+    response: ServerResponse,
+    queryToken?: string | null,
+  ): TokenLevel | null => {
+    if (tokenConfig.admin.length + tokenConfig.write.length + tokenConfig.read.length === 0) {
+      return "admin"; // no tokens configured → open access
+    }
+    const level = tokenLevel(extractToken(request, queryToken));
+    if (!level) {
+      authError(response);
+      return null;
+    }
+    return level;
+  };
+
+  const requireLevel = (
+    level: TokenLevel | null,
+    minimum: TokenLevel,
+    response: ServerResponse,
+  ): boolean => {
+    if (level === null) return false; // already sent 401
+    const ranks: Record<TokenLevel, number> = { admin: 3, write: 2, read: 1 };
+    if ((ranks[level] ?? 0) < (ranks[minimum] ?? 0)) {
+      forbidden(response);
+      return false;
+    }
+    return true;
+  };
 
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://localhost");
@@ -36,11 +98,9 @@ export function createApiServer(options: ApiServerOptions = {}) {
         return;
       }
 
-      if (authToken && url.pathname.startsWith("/api/") && !isAuthorized(request, authToken)) {
-        send(response, 401, { error: "Unauthorized" });
-        return;
-      }
+      const level = requireAuth(request, response, url.searchParams.get("token"));
 
+      // ── Read-only routes ──────────────────────────────────────
       if (
         request.method === "GET" &&
         !url.pathname.startsWith("/api/") &&
@@ -50,36 +110,14 @@ export function createApiServer(options: ApiServerOptions = {}) {
       }
 
       if (request.method === "GET" && url.pathname === "/api/sessions") {
+        if (!requireLevel(level, "read", response)) return;
         send(response, 200, await tmux.snapshot());
-        return;
-      }
-
-      if (request.method === "POST" && url.pathname === "/api/sessions") {
-        const body = await readJson<{ name?: string; cwd?: string }>(request);
-        send(response, 201, await tmux.createSession(required(body.name, "name"), body.cwd));
-        return;
-      }
-
-      const sessionTarget = match(url.pathname, /^\/api\/sessions\/(.+)$/);
-      if (request.method === "DELETE" && sessionTarget) {
-        send(response, 200, await tmux.killSession(decodeURIComponent(sessionTarget)));
-        return;
-      }
-
-      if (request.method === "POST" && url.pathname === "/api/windows") {
-        const body = await readJson<{ target?: string; name?: string }>(request);
-        send(response, 201, await tmux.createWindow(required(body.target, "target"), body.name));
-        return;
-      }
-
-      const windowTarget = match(url.pathname, /^\/api\/windows\/(.+)$/);
-      if (request.method === "DELETE" && windowTarget) {
-        send(response, 200, await tmux.killWindow(decodeURIComponent(windowTarget)));
         return;
       }
 
       const paneCaptureTarget = match(url.pathname, /^\/api\/panes\/(.+)\/capture$/);
       if (request.method === "GET" && paneCaptureTarget) {
+        if (!requireLevel(level, "read", response)) return;
         send(
           response,
           200,
@@ -91,51 +129,86 @@ export function createApiServer(options: ApiServerOptions = {}) {
         return;
       }
 
+      // ── Write routes ──────────────────────────────────────────
+      if (request.method === "POST" && url.pathname === "/api/sessions") {
+        if (!requireLevel(level, "write", response)) return;
+        const body = await readJson<{ name?: string; cwd?: string }>(request);
+        const result = await tmux.createSession(required(body.name, "name"), body.cwd);
+        auditLog("create_session", body.name ?? "(unnamed)", extractToken(request));
+        send(response, 201, result);
+        return;
+      }
+
+      const sessionTarget = match(url.pathname, /^\/api\/sessions\/(.+)$/);
+      if (request.method === "DELETE" && sessionTarget) {
+        if (!requireLevel(level, "admin", response)) return;
+        const target = decodeURIComponent(sessionTarget);
+        const result = await tmux.killSession(target);
+        auditLog("kill_session", target, extractToken(request));
+        send(response, 200, result);
+        return;
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/windows") {
+        if (!requireLevel(level, "write", response)) return;
+        const body = await readJson<{ target?: string; name?: string }>(request);
+        send(response, 201, await tmux.createWindow(required(body.target, "target"), body.name));
+        return;
+      }
+
+      const windowTarget = match(url.pathname, /^\/api\/windows\/(.+)$/);
+      if (request.method === "DELETE" && windowTarget) {
+        if (!requireLevel(level, "admin", response)) return;
+        const target = decodeURIComponent(windowTarget);
+        const result = await tmux.killWindow(target);
+        auditLog("kill_window", target, extractToken(request));
+        send(response, 200, result);
+        return;
+      }
+
       const paneSplitTarget = match(url.pathname, /^\/api\/panes\/(.+)\/split$/);
       if (request.method === "POST" && paneSplitTarget) {
+        if (!requireLevel(level, "write", response)) return;
         const body = await readJson<{ direction?: "horizontal" | "vertical" }>(request);
-        send(
-          response,
-          201,
-          await tmux.splitPane(decodeURIComponent(paneSplitTarget), body.direction ?? "horizontal"),
+        const result = await tmux.splitPane(
+          decodeURIComponent(paneSplitTarget),
+          body.direction ?? "horizontal",
         );
+        auditLog("split_pane", decodeURIComponent(paneSplitTarget), extractToken(request));
+        send(response, 201, result);
         return;
       }
 
       const paneInputTarget = match(url.pathname, /^\/api\/panes\/(.+)\/input$/);
       if (request.method === "POST" && paneInputTarget) {
+        if (!requireLevel(level, "write", response)) return;
         const body = await readJson<{ data?: string }>(request);
-        send(
-          response,
-          200,
-          await tmux.sendInput(decodeURIComponent(paneInputTarget), required(body.data, "data")),
-        );
+        const target = decodeURIComponent(paneInputTarget);
+        const result = await tmux.sendInput(target, required(body.data, "data"));
+        auditLog("input", target, extractToken(request));
+        send(response, 200, result);
         return;
       }
 
       const paneKeysTarget = match(url.pathname, /^\/api\/panes\/(.+)\/keys$/);
       if (request.method === "POST" && paneKeysTarget) {
+        if (!requireLevel(level, "write", response)) return;
         const body = await readJson<{ keys?: string[] }>(request);
-        send(
-          response,
-          200,
-          await tmux.sendKeys(decodeURIComponent(paneKeysTarget), body.keys ?? []),
-        );
+        const target = decodeURIComponent(paneKeysTarget);
+        const result = await tmux.sendKeys(target, body.keys ?? []);
+        auditLog("keys", target, extractToken(request));
+        send(response, 200, result);
         return;
       }
 
       const paneResizeTarget = match(url.pathname, /^\/api\/panes\/(.+)\/resize$/);
       if (request.method === "POST" && paneResizeTarget) {
+        if (!requireLevel(level, "write", response)) return;
         const body = await readJson<{ width?: number; height?: number }>(request);
-        send(
-          response,
-          200,
-          await tmux.resizePane(
-            decodeURIComponent(paneResizeTarget),
-            Number(body.width),
-            Number(body.height),
-          ),
-        );
+        const target = decodeURIComponent(paneResizeTarget);
+        const result = await tmux.resizePane(target, Number(body.width), Number(body.height));
+        auditLog("resize", target, extractToken(request));
+        send(response, 200, result);
         return;
       }
 
@@ -155,7 +228,12 @@ export function createApiServer(options: ApiServerOptions = {}) {
       return;
     }
 
-    if (authToken && !isAuthorized(request, authToken, url.searchParams.get("token"))) {
+    // WebSocket stream requires at least read access
+    const queryToken = url.searchParams.get("token");
+    if (
+      tokenConfig.admin.length + tokenConfig.write.length + tokenConfig.read.length > 0 &&
+      !tokenLevel(extractToken(request, queryToken))
+    ) {
       socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
       socket.destroy();
       return;
@@ -288,12 +366,19 @@ function contentType(file: string) {
 }
 
 function send(response: ServerResponse, status: number, data: unknown) {
-  response.writeHead(status, {
+  const headers: Record<string, string> = {
     "Access-Control-Allow-Headers": "authorization,content-type,x-tmuapp-token",
     "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS",
-    "Access-Control-Allow-Origin": "*",
     "Content-Type": "application/json; charset=utf-8",
-  });
+  };
+
+  // Use configured CORS origin, default to same-origin (empty = browser-enforced)
+  const origin = process.env["TMUAPP_CORS_ORIGIN"];
+  if (origin) {
+    headers["Access-Control-Allow-Origin"] = origin;
+  }
+
+  response.writeHead(status, headers);
   response.end(data === undefined ? undefined : JSON.stringify(data));
 }
 
@@ -319,15 +404,6 @@ async function readJson<T>(request: IncomingMessage): Promise<T> {
   } catch {
     throw new Error("Request body must be valid JSON");
   }
-}
-
-function isAuthorized(request: IncomingMessage, token: string, queryToken?: string | null) {
-  const authorization = request.headers.authorization;
-  if (authorization === `Bearer ${token}`) {
-    return true;
-  }
-
-  return request.headers["x-tmuapp-token"] === token || queryToken === token;
 }
 
 function required(value: string | undefined, name: string) {

@@ -1,6 +1,7 @@
 export type TerminalStreamMessage =
   | { type: "output"; data: string }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  | { type: "ping" };
 
 export type TerminalStreamCommand =
   | { type: "input"; data: string }

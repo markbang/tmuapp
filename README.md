@@ -1,182 +1,131 @@
 # tmuapp
 
-tmuapp is a production-oriented tmux management console. It ships as a web UI, HTTP API, Docker image, and Jetpack Compose Android client for managing real tmux sessions on a machine you control.
+> **Agent stuck? Reply from your phone.**
 
-The web console renders ANSI pane output with wterm, keeps the cursor aligned with tmux pane metadata, and can send literal input, Enter, splits, resizes, session creation, and window management commands back to tmux.
+`tmuapp` is a self-hosted **tmux cockpit**.
 
-## Features
+It lets you monitor long-running tasks, builds, deploys, logs, and AI coding agents from a browser or Android phone. You do not need to keep an SSH session open or hunt through terminal windows. Open tmuapp, check the state, and send a quick reply when needed.
 
-- Web console for sessions, windows, panes, ANSI capture, pane resize, split, and input.
-- HTTP API over the local `tmux` command for automation and mobile clients.
-- Optional bearer-token protection with `TMUAPP_TOKEN` for non-local deployments.
-- Docker image with `tmux`, static web assets, API server, and healthcheck included.
-- Jetpack Compose Android client with signed release APKs published from GitHub Actions.
-- Release artifacts for universal Android APK, ABI-specific APKs, and GHCR Docker tags.
+## Why tmuapp?
 
-## Workspace
+You may want tmuapp if:
 
-- `apps/api` exposes the tmux HTTP API and serves the built web UI in production.
-- `apps/website` is the Vite web console.
-- `apps/android` is the Jetpack Compose Android client source.
-- `packages/utils` contains shared tmux formats, parsers, types, and target validation.
-- `Dockerfile` builds the runtime image.
-- `.github/workflows/ci.yml` builds, tests, publishes Docker, and produces signed Android APKs.
+- Claude Code, Codex, or another coding agent gets stuck waiting for confirmation.
+- Tests, builds, deployments, training jobs, crawlers, or log tails run for a long time.
+- Your remote machine has many tmux sessions and you want to know what is still active.
+- You leave your desk but still want to check progress from your phone.
+- You only need to send a small response like `y`, `n`, `Enter`, or `Ctrl-C`.
 
-## Quick Start
+`tmuapp` does not try to replace your terminal. It adds a lightweight remote control plane on top of the tmux workflow you already use.
 
-Run from source on a machine with `tmux` installed:
+## In one sentence
 
-```bash
-vp install
-vp run dev
-```
+**Use Web and Android to safely monitor your tmux tasks, and reply quickly when an agent is waiting for you.**
 
-Open `http://localhost:5173`. The Vite dev server proxies `/api` and `/health` to `http://localhost:8787`.
+## Who is it for?
 
-Run the production server locally:
+- Developers who live in tmux.
+- People running work on remote servers, dev boxes, NAS machines, or containers.
+- Users of Claude Code, Codex CLI, Aider, Gemini CLI, and other AI coding agents.
+- Self-hosting users who do not want terminal data sent to a third-party SaaS.
+- Anyone who wants mobile monitoring, not a full mobile IDE.
 
-```bash
-vp run -r build
-PORT=8787 vp run api#start
-```
+## What can it do?
 
-Open `http://localhost:8787`; the API serves the built web console and `/api/*` from the same origin.
+- View tmux sessions, windows, and panes in a browser.
+- See recent output and live terminal streams.
+- Create sessions, split panes, send input, and send tmux keys.
+- Monitor remote tasks from an Android phone.
+- Quickly send replies such as `y`, `n`, `Enter`, or `Ctrl-C`.
+- Protect access with tokens and run behind your trusted network, VPN, or reverse proxy.
 
-## Docker
+## Quick start
 
-Pull a release image:
-
-```bash
-docker pull ghcr.io/markbang/tmuapp:0.1.1
-```
-
-Run it with an isolated tmux server inside the container:
+You need Docker on the machine that should run tmuapp:
 
 ```bash
 docker run --rm \
   -p 8787:8787 \
   -e TMUAPP_TOKEN='change-this-token' \
-  ghcr.io/markbang/tmuapp:0.1.1
+  ghcr.io/markbang/tmuapp:latest
 ```
 
-Use `latest`, `0.1.1`, or `v0.1.1` tags. On pushes to `main`, GitHub Actions publishes all three tags to GHCR.
+Then open:
 
-The image exposes `/health` and includes a Docker `HEALTHCHECK`. Keep tmuapp behind a trusted network, VPN, SSH tunnel, or reverse proxy. If it is reachable outside localhost, set `TMUAPP_TOKEN` and require HTTPS at the proxy.
-
-To control a host tmux server from Docker, mount the tmux socket directory and run the container with the same UID as the host tmux server owner. For most users, the isolated in-container tmux server is simpler and safer.
-
-## Authentication
-
-Authentication is disabled by default for local development. Set `TMUAPP_TOKEN` to require a token for every `/api/*` endpoint:
-
-```bash
-TMUAPP_TOKEN='change-this-token' PORT=8787 vp run api#start
+```text
+http://localhost:8787
 ```
 
-Clients can authenticate with either header:
+For phone or remote access, run tmuapp behind Tailscale, a VPN, HTTPS reverse proxy, or Cloudflare Tunnel, and always use a strong token.
 
-```http
-Authorization: Bearer change-this-token
-X-Tmuapp-Token: change-this-token
-```
+## Common use cases
 
-The web console has a `Token` button that stores the token in browser local storage. The Android client has an API token field. `/health` and static web assets stay public so load balancers and browsers can reach the app shell.
+### Local monitoring
 
-## Android
+Run tmuapp on your development machine and open the dashboard in a browser to see your tmux sessions at a glance.
 
-The Android client is a Jetpack Compose native app. It can call `/health`, list sessions, create and kill sessions, capture panes, send literal input, and send Enter to a pane target.
+### Remote server monitoring
 
-Do not build the Android app locally for this delivery. GitHub Actions runs:
+Deploy tmuapp on a remote server and access it through Tailscale or HTTPS. This is useful for builds, deploys, logs, training jobs, and other long-running work.
 
-```bash
-gradle -p apps/android assembleRelease
-```
+### AI agent monitoring
 
-The workflow signs and verifies APKs before uploading the `tmuapp-release-apk` artifact. GitHub Release `v0.1.1` contains:
+Run Claude Code, Codex, or another coding agent inside tmux. When you leave your desk, use tmuapp to check whether it is still working or waiting for input. If needed, reply from your phone.
 
-- `tmuapp-v0.1.1.apk`
-- `tmuapp-arm64-v8a-v0.1.1.apk`
-- `tmuapp-armeabi-v7a-v0.1.1.apk`
-- `tmuapp-x86-v0.1.1.apk`
-- `tmuapp-x86_64-v0.1.1.apk`
+### Android companion
 
-Push builds require these GitHub secrets:
+The Android app is meant to be a companion monitor, not a full mobile terminal. It is best for checking status, reading recent output, and sending small, low-risk actions.
 
-- `ANDROID_SIGNING_KEYSTORE_BASE64`
-- `ANDROID_SIGNING_STORE_PASSWORD`
-- `ANDROID_SIGNING_KEY_ALIAS`
-- `ANDROID_SIGNING_KEY_PASSWORD`
+## Security
 
-## API
+`tmuapp` can send input to real shells through tmux. Treat write access like SSH access.
 
-See `docs/API.md` for endpoint details.
+Recommended precautions:
 
-Common calls:
+- Do not expose tmuapp directly to the public internet.
+- Always configure a token.
+- Prefer Tailscale, a VPN, Cloudflare Tunnel, or an HTTPS reverse proxy.
+- Use read-only or low-privilege tokens for monitoring-only clients when possible.
+- Never commit tokens to a repository or share them in screenshots.
 
-```bash
-curl http://localhost:8787/health
-curl -H 'Authorization: Bearer change-this-token' http://localhost:8787/api/sessions
-curl -X POST -H 'Content-Type: application/json' \
-  -H 'Authorization: Bearer change-this-token' \
-  -d '{"name":"work"}' \
-  http://localhost:8787/api/sessions
-```
+For API and deployment details, see [`docs/API.md`](docs/API.md).
 
-Targets are tmux ids or target strings such as `%1`, `@1`, `$1`, or `work:0.0`.
+## Project direction
 
-## Local Development
+`tmuapp` is focused on three things:
 
-Install dependencies after cloning or pulling:
+1. **Remote monitoring** — clearly show what is happening inside tmux.
+2. **Agent awareness** — detect whether coding agents are working, done, or waiting for you.
+3. **Fast intervention** — make the smallest necessary action easy from Web or Android.
+
+It is not trying to become:
+
+- A custom terminal emulator.
+- A full cloud IDE.
+- A heavy team collaboration platform.
+- An agent orchestration platform.
+- A plugin marketplace or large workspace system.
+
+For the longer product discussion, see [`docs/tmuapp-future-directions.md`](docs/tmuapp-future-directions.md).
+
+## Development
+
+If you want to work on the project:
 
 ```bash
 vp install
-```
-
-Run API and web together:
-
-```bash
 vp run dev
 ```
 
-Run them separately when debugging one side:
+Useful checks:
 
 ```bash
-vp run api#dev
-vp run website#dev
-```
-
-If you enable auth during web development, provide the token through the UI or set `VITE_TMUAPP_TOKEN` for the website dev server.
-
-## Validation
-
-Run the release gate:
-
-```bash
-vp run ready
-```
-
-Equivalent commands:
-
-```bash
-vp run -r build
 vp check
 vp run -r test
-vp run website#e2e
 ```
 
-For production confidence, also run a container and probe the health/API path:
+The README intentionally stays user-facing. Detailed API, build, release, and implementation notes live in the docs and source tree.
 
-```bash
-docker build -t tmuapp:local .
-docker run --rm -p 8787:8787 -e TMUAPP_TOKEN=dev-token tmuapp:local
-curl http://localhost:8787/health
-curl -H 'Authorization: Bearer dev-token' http://localhost:8787/api/sessions
-```
+## License
 
-## Release
-
-GitHub Actions is the source of release artifacts:
-
-- Web/API build, lint, unit tests, and Playwright e2e must pass.
-- Docker image is pushed to GHCR as `latest`, `0.1.1`, and `v0.1.1`.
-- Android release APKs are signed, verified with `apksigner`, uploaded as workflow artifacts, and attached to GitHub Release `v0.1.1`.
+TBD.

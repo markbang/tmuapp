@@ -173,3 +173,36 @@
   outline-offset: -2px;
   transition: outline-color 150ms ease;
 }
+
+.quick-reply-bar {
+  height: 40px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 16px;
+  border-top: 1px solid var(--hairline);
+  background: var(--surface-1);
+}
+
+.quick-reply-btn {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 4px;
+  color: var(--ink);
+  background: var(--surface-3);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background 150ms ease,
+    border-color 150ms ease;
+}
+
+.quick-reply-btn:hover {
+  border-color: var(--primary-hover);
+  background: var(--surface-2);
+  color: var(--ink);
+}

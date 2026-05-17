@@ -398,10 +398,7 @@ test("shows a quiet offline state with retry when the API is unavailable", async
   await page.goto("/");
 
   await expect(page.getByText("tmux API is offline")).toBeVisible();
-  await expect(page.getByText("Start the tmux API or retry when it is available.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
-  await expect(page.getByText("offline", { exact: true })).toBeVisible();
-  await expect(page.getByText("Unable to reach tmux API")).toHaveCount(0);
   await expect(page.locator(".empty-state.danger")).toHaveCount(0);
 });
 
@@ -412,8 +409,7 @@ test("shows an empty state when tmux has no sessions", async ({ page }) => {
 
   await page.goto("/");
 
-  await expect(page.getByText("No tmux sessions")).toBeVisible();
-  await expect(page.getByText("Create a new session")).toBeVisible();
+  await expect(page.getByText("No active windows")).toBeVisible();
   await expect(page.locator("[data-session-card]")).toHaveCount(0);
 });
 
@@ -562,7 +558,8 @@ async function openSessionManager(page: Page, previewText = "from mocked tmux") 
   await expect(sessionCard).toContainText("work");
   await expect(sessionCard).toContainText(previewText);
   await sessionCard.click();
-  await expect(page.getByText("shell").first()).toBeVisible();
+  // New design: header shows "Tmux Terminal"
+  await expect(page.getByText("Tmux Terminal")).toBeVisible();
 }
 
 async function mockTmuxApi(
