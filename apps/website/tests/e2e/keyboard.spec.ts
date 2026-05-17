@@ -25,6 +25,21 @@ const snapshot = {
   },
 };
 
+async function openSessionManager(page: Page) {
+  await page.goto("/");
+  const sessionCard = page.locator("[data-session-card]").first();
+  await expect(sessionCard).toContainText("work");
+  await sessionCard.click();
+  await expect(page.getByText("Tmux Terminal").first()).toBeVisible();
+}
+
+async function focusTerminal(page: Page) {
+  await page.locator("#terminal").evaluate((el) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (el as any)._xtermInstance?.focus();
+  });
+}
+
 async function mockKeyboardApi(page: Page, inputPayloads: string[]) {
   await page.route("**/api/sessions", async (route) => {
     await route.fulfill({ json: snapshot });
@@ -65,21 +80,6 @@ async function mockKeyboardApi(page: Page, inputPayloads: string[]) {
 
   await page.route("**/api/panes/*/split", async (route) => {
     await route.fulfill({ json: snapshot });
-  });
-}
-
-async function openSessionManager(page: Page) {
-  await page.goto("/");
-  const sessionCard = page.locator("[data-session-card]").first();
-  await expect(sessionCard).toContainText("work");
-  await sessionCard.click();
-  await expect(page.getByText("shell").first()).toBeVisible();
-}
-
-async function focusTerminal(page: Page) {
-  await page.locator("#terminal").evaluate((el) => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (el as any)._xtermInstance?.focus();
   });
 }
 

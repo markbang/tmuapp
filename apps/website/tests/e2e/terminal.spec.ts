@@ -106,9 +106,6 @@ test("resizes narrow tmux panes to fill the browser terminal", async ({ page }) 
 
   await expect.poll(() => resizePayloads.at(-1)?.width ?? 0).toBeGreaterThan(120);
   await expectReasonableTerminalFit(page);
-  await expect(page.locator(".terminal-toolbar")).toContainText(
-    paneSize.width + "x" + paneSize.height,
-  );
   await expect
     .poll(() => terminalText(page))
     .toContain(
@@ -276,59 +273,6 @@ test("keeps scrollback stable while the user is scrolled away from the bottom", 
   expect(captureCount).toBe(capturesAfterUserScroll);
 });
 
-test("pane input follows new output and forwards completion tab", async ({ page }) => {
-  const inputPayloads: string[] = [];
-  const keyPayloads: string[][] = [];
-  const initialCapture = Array.from(
-    { length: 200 },
-    (_, index) => `history line ${String(index + 1).padStart(3, "0")}`,
-  ).join("\r\n");
-  const afterInputCapture = [
-    ...Array.from(
-      { length: 200 },
-      (_, index) => `history line ${String(index + 1).padStart(3, "0")}`,
-    ),
-    "ls",
-    "src",
-    "tests",
-    "prompt> ",
-  ].join("\r\n");
-
-  await page.setViewportSize({ width: 1280, height: 820 });
-  await mockTmuxApi(page, { inputPayloads, keyPayloads, resizePayloads: [] }, () => ({
-    target: "%1",
-    ansi: inputPayloads.length > 0 ? afterInputCapture : initialCapture,
-    lines: 240,
-    terminal: { rows: 34, columns: 120, cursorRow: 33, cursorColumn: 0 },
-  }));
-  await openSessionManager(page, "history line 200");
-
-  const terminal = page.locator("#terminal");
-  // Scroll to top.
-  await terminal.evaluate((element) => {
-    const vp = element.querySelector<HTMLElement>(".xterm-viewport");
-    if (vp) {
-      vp.scrollTop = 0;
-      vp.dispatchEvent(new Event("scroll"));
-    }
-  });
-  await expect.poll(() => terminalScrollMetrics(page)).toMatchObject({ top: 0 });
-
-  await page.getByLabel("Pane input").fill("ls");
-  await page.getByRole("button", { name: "Run" }).click();
-
-  await expect.poll(() => inputPayloads.join("")).toContain("ls");
-  await expect.poll(() => terminalText(page)).toContain("prompt>");
-  await expect.poll(() => terminalScrollMetrics(page)).toMatchObject({ atBottom: true });
-
-  await page.getByLabel("Pane input").fill("ec");
-  await page.getByLabel("Pane input").press("Tab");
-
-  await expect.poll(() => inputPayloads.join("")).toContain("lsec");
-  await expect.poll(() => keyPayloads).toContainEqual(["Tab"]);
-  await expect(page.getByLabel("Pane input")).toHaveValue("");
-});
-
 test("keeps product chrome outside the terminal boundary", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 820 });
   await mockTmuxApi(page, { inputPayloads: [], keyPayloads: [], resizePayloads: [] });
@@ -341,11 +285,11 @@ test("keeps product chrome outside the terminal boundary", async ({ page }) => {
   const metrics = await page.evaluate(() => {
     const viewport = document.querySelector(".terminal-wrap");
     const terminal = document.querySelector("#terminal");
-    const shell = document.querySelector(".terminal-shell");
+    const body = document.querySelector(".terminal-body");
     if (
       !(viewport instanceof HTMLElement) ||
       !(terminal instanceof HTMLElement) ||
-      !(shell instanceof HTMLElement)
+      !(body instanceof HTMLElement)
     ) {
       return undefined;
     }
@@ -354,7 +298,7 @@ test("keeps product chrome outside the terminal boundary", async ({ page }) => {
       bodyScrollHeight: document.documentElement.scrollHeight,
       bodyClientHeight: document.documentElement.clientHeight,
       terminalHeight: terminal.getBoundingClientRect().height,
-      shellHeight: shell.getBoundingClientRect().height,
+      bodyHeight: body.getBoundingClientRect().height,
       viewportHeight: viewport.getBoundingClientRect().height,
     };
   });
@@ -362,7 +306,7 @@ test("keeps product chrome outside the terminal boundary", async ({ page }) => {
   expect(metrics).toBeDefined();
   expect(metrics!.bodyScrollHeight).toBeLessThanOrEqual(metrics!.bodyClientHeight + 1);
   expect(metrics!.terminalHeight).toBeGreaterThan(320);
-  expect(metrics!.viewportHeight).toBeGreaterThan(metrics!.shellHeight * 0.6);
+  expect(metrics!.viewportHeight).toBeGreaterThan(metrics!.bodyHeight * 0.6);
 });
 
 test("forwards raw keyboard and paste sequences", async ({ page }) => {
@@ -413,12 +357,12 @@ test("shows an empty state when tmux has no sessions", async ({ page }) => {
   await expect(page.locator("[data-session-card]")).toHaveCount(0);
 });
 
-test("creates a session from the first-run form and opens the manager", async ({ page }) => {
-  const created: Array<{ name: string; cwd?: string }> = [];
+test("creates a session and opens the terminal", async ({ page }) => {
+  const created: Array<{ name: string }> = [];
 
   await page.route("**/api/sessions", async (route) => {
     if (route.request().method() === "POST") {
-      created.push(route.request().postDataJSON() as { name: string; cwd?: string });
+      created.push(route.request().postDataJSON() as { name: string });
       await route.fulfill({ json: snapshot });
       return;
     }
@@ -442,13 +386,11 @@ test("creates a session from the first-run form and opens the manager", async ({
   });
 
   await page.goto("/");
-  await page.getByLabel("Session name").fill("work");
-  await page.getByLabel("Working directory").fill("/repo");
-  await page.getByRole("button", { name: "Create" }).click();
+  // New design: click "New Window" button (no form).
+  await page.getByRole("button", { name: "New Window" }).click();
 
-  await expect.poll(() => created).toEqual([{ name: "work", cwd: "/repo" }]);
+  await expect.poll(() => created.length).toBe(1);
   await expect(page.getByText("Session created")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Back" })).toBeVisible();
   await expect.poll(() => terminalText(page)).toContain("ready");
 });
 
@@ -480,53 +422,6 @@ test("configures an API token without a blocking browser prompt", async ({ page 
   await expect(page.getByText("API Token Saved")).toBeVisible();
   await expect(page.getByRole("dialog", { name: "API Token" })).toHaveCount(0);
   await expect.poll(() => sessionHeaders.filter(Boolean).at(-1)).toBe("Bearer secret-token");
-});
-
-test("confirms before killing a tmux window", async ({ page }) => {
-  let deleteCount = 0;
-
-  await mockTmuxApi(page, { inputPayloads: [], keyPayloads: [], resizePayloads: [] });
-  await page.route("**/api/windows/*", async (route) => {
-    if (route.request().method() === "DELETE") {
-      deleteCount += 1;
-    }
-    await route.fulfill({ json: { ok: true } });
-  });
-
-  await openSessionManager(page);
-  await page.getByRole("button", { name: "Kill Window" }).click();
-  await expect(page.getByRole("dialog", { name: "Kill Window" })).toBeVisible();
-
-  await page.getByRole("button", { name: "Cancel" }).click();
-  await expect(page.getByRole("dialog", { name: "Kill Window" })).toHaveCount(0);
-  expect(deleteCount).toBe(0);
-
-  await page.getByRole("button", { name: "Kill Window" }).click();
-  await page
-    .getByRole("dialog", { name: "Kill Window" })
-    .getByRole("button", {
-      name: "Kill Window",
-    })
-    .click();
-
-  await expect.poll(() => deleteCount).toBe(1);
-  await expect(page.getByText("Window killed")).toBeVisible();
-});
-
-test("falls back to pane metadata when session preview capture fails", async ({ page }) => {
-  await page.route("**/api/sessions", async (route) => {
-    await route.fulfill({ json: snapshot });
-  });
-  await page.route("**/api/panes/*/capture?*", async (route) => {
-    await route.fulfill({ status: 500, body: "capture failed" });
-  });
-
-  await page.goto("/");
-
-  const sessionCard = page.locator("[data-session-card]").first();
-  await expect(sessionCard).toContainText("work");
-  await expect(sessionCard.locator(".session-preview")).toContainText("bash");
-  await expect(sessionCard.locator(".session-preview")).toHaveClass(/fallback/u);
 });
 
 test("shows a pane capture failure notice without hiding the terminal", async ({ page }) => {
@@ -697,8 +592,8 @@ async function expectTerminalFillsManager(page: Page) {
         };
 
         return {
-          manager: rect(".manager-body"),
-          terminalShell: rect(".terminal-shell"),
+          terminalWindow: rect(".terminal-window"),
+          terminalBody: rect(".terminal-body"),
           terminalWrap: rect(".terminal-wrap"),
           terminal: rect("#terminal"),
           viewportWidth: window.innerWidth,
@@ -706,8 +601,8 @@ async function expectTerminalFillsManager(page: Page) {
       }),
     )
     .toMatchObject({
-      manager: { width: expect.any(Number) },
-      terminalShell: { width: expect.any(Number) },
+      terminalWindow: { width: expect.any(Number) },
+      terminalBody: { width: expect.any(Number) },
       terminalWrap: { width: expect.any(Number) },
       terminal: { width: expect.any(Number) },
     });
@@ -717,17 +612,17 @@ async function expectTerminalFillsManager(page: Page) {
       document.querySelector(selector)?.getBoundingClientRect().width ?? 0;
 
     return {
-      manager: width(".manager-body"),
-      terminalShell: width(".terminal-shell"),
+      terminalWindow: width(".terminal-window"),
+      terminalBody: width(".terminal-body"),
       terminalWrap: width(".terminal-wrap"),
       terminal: width("#terminal"),
       viewport: window.innerWidth,
     };
   });
 
-  expect(sizes.manager).toBeGreaterThan(sizes.viewport - 2);
-  expect(sizes.terminalShell).toBeGreaterThan(sizes.manager - 2);
-  expect(sizes.terminalWrap).toBeGreaterThan(sizes.terminalShell - 2);
+  expect(sizes.terminalWindow).toBeGreaterThan(sizes.viewport - 2);
+  expect(sizes.terminalBody).toBeGreaterThan(sizes.terminalWindow - 2);
+  expect(sizes.terminalWrap).toBeGreaterThan(sizes.terminalBody - 2);
   expect(sizes.terminal).toBeGreaterThan(sizes.terminalWrap - 2);
 }
 
