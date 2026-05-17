@@ -19,6 +19,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.material3.AlertDialog
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -283,7 +284,6 @@ private fun TmuxApp(window: android.view.Window, prefs: android.content.SharedPr
         if (activeSessionId != null) {
             TerminalScreen(
                 sessionId = activeSessionId!!,
-                snapshot = snapshot,
                 client = client,
                 onBack = { activeSessionId = null },
             )
@@ -634,20 +634,18 @@ private fun CreateCard(onClick: () -> Unit) {
 @Composable
 private fun TerminalScreen(
     sessionId: String,
-    snapshot: TmuxSnapshot,
     client: TmuappApiClient,
     onBack: () -> Unit,
 ) {
-    // Find the active pane for this session
     var ansi by remember { mutableStateOf("") }
     var streamConn by remember { mutableStateOf<StreamConnection?>(null) }
+    var localSnapshot by remember { mutableStateOf(TmuxSnapshot()) }
     val scope = rememberCoroutineScope()
 
-    // First fetch snapshot to find the first pane
     LaunchedEffect(sessionId) {
         try {
             val snap = client.snapshot()
-            snapshot = snap
+            localSnapshot = snap
             val windows = snap.windows[sessionId].orEmpty()
             val activeWindow = windows.firstOrNull { it.active } ?: windows.firstOrNull()
             val panes = activeWindow?.let { snap.panes[it.id].orEmpty() }.orEmpty()
@@ -708,9 +706,9 @@ private fun TerminalScreen(
                 // Find first pane and send via HTTP
                 scope.launch {
                     try {
-                        val windows = snapshot.windows[sessionId].orEmpty()
+                        val windows = localSnapshot.windows[sessionId].orEmpty()
                         val w = windows.firstOrNull { it.active } ?: windows.firstOrNull()
-                        val panes = w?.let { snapshot.panes[it.id].orEmpty() }.orEmpty()
+                        val panes = w?.let { localSnapshot.panes[it.id].orEmpty() }.orEmpty()
                         val pane = panes.firstOrNull { it.active } ?: panes.firstOrNull()
                         if (pane != null) {
                             client.sendInput(pane.id, cmd)
