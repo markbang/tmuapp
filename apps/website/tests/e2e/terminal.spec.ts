@@ -591,10 +591,22 @@ async function expectTerminalFillsManager(page: Page) {
           return box ? { left: box.left, right: box.right, width: box.width } : null;
         };
 
+        const contentWidth = (selector: string) => {
+          const element = document.querySelector(selector);
+          if (!(element instanceof HTMLElement)) return 0;
+          const styles = getComputedStyle(element);
+          return (
+            element.getBoundingClientRect().width -
+            (Number.parseFloat(styles.paddingLeft) || 0) -
+            (Number.parseFloat(styles.paddingRight) || 0)
+          );
+        };
+
         return {
           terminalWindow: rect(".terminal-window"),
           terminalBody: rect(".terminal-body"),
           terminalWrap: rect(".terminal-wrap"),
+          terminalWrapContent: contentWidth(".terminal-wrap"),
           terminal: rect("#terminal"),
           viewportWidth: window.innerWidth,
         };
@@ -604,6 +616,7 @@ async function expectTerminalFillsManager(page: Page) {
       terminalWindow: { width: expect.any(Number) },
       terminalBody: { width: expect.any(Number) },
       terminalWrap: { width: expect.any(Number) },
+      terminalWrapContent: expect.any(Number),
       terminal: { width: expect.any(Number) },
     });
 
@@ -611,10 +624,22 @@ async function expectTerminalFillsManager(page: Page) {
     const width = (selector: string) =>
       document.querySelector(selector)?.getBoundingClientRect().width ?? 0;
 
+    const contentWidth = (selector: string) => {
+      const element = document.querySelector(selector);
+      if (!(element instanceof HTMLElement)) return 0;
+      const styles = getComputedStyle(element);
+      return (
+        element.getBoundingClientRect().width -
+        (Number.parseFloat(styles.paddingLeft) || 0) -
+        (Number.parseFloat(styles.paddingRight) || 0)
+      );
+    };
+
     return {
       terminalWindow: width(".terminal-window"),
       terminalBody: width(".terminal-body"),
       terminalWrap: width(".terminal-wrap"),
+      terminalWrapContent: contentWidth(".terminal-wrap"),
       terminal: width("#terminal"),
       viewport: window.innerWidth,
     };
@@ -623,7 +648,7 @@ async function expectTerminalFillsManager(page: Page) {
   expect(sizes.terminalWindow).toBeGreaterThan(sizes.viewport - 2);
   expect(sizes.terminalBody).toBeGreaterThan(sizes.terminalWindow - 2);
   expect(sizes.terminalWrap).toBeGreaterThan(sizes.terminalBody - 2);
-  expect(sizes.terminal).toBeGreaterThan(sizes.terminalWrap - 2);
+  expect(sizes.terminal).toBeGreaterThan(sizes.terminalWrapContent - 2);
 }
 
 async function expectNoPageScrollbar(page: Page) {
