@@ -32,7 +32,8 @@ export type TmuxSnapshot = {
   panes: Record<string, TmuxPane[]>;
 };
 
-const FIELD_SEPARATOR = "\t";
+const FIELD_SEPARATOR = "|";
+const LEGACY_FIELD_SEPARATOR = "\t";
 
 export const tmuxFormats = {
   sessions: [
@@ -131,5 +132,7 @@ function rows(output: string): string[][] {
     .split("\n")
     .map((line) => line.trimEnd())
     .filter(Boolean)
-    .map((line) => line.split(FIELD_SEPARATOR));
+    .map((line) =>
+      line.split(line.includes(FIELD_SEPARATOR) ? FIELD_SEPARATOR : LEGACY_FIELD_SEPARATOR),
+    );
 }

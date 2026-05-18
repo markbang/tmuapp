@@ -17,6 +17,12 @@ describe("tmux format helpers", () => {
 
 describe("tmux parsers", () => {
   test("parses session rows", () => {
+    expect(parseSessions("$1|work|3|1|1778490000\n")).toEqual([
+      { id: "$1", name: "work", windows: 3, attached: true, createdAt: 1778490000 },
+    ]);
+  });
+
+  test("parses legacy tab-separated session rows", () => {
     expect(parseSessions("$1\twork\t3\t1\t1778490000\n")).toEqual([
       { id: "$1", name: "work", windows: 3, attached: true, createdAt: 1778490000 },
     ]);
@@ -38,7 +44,7 @@ describe("tmux parsers", () => {
   });
 
   test("parses pane rows", () => {
-    expect(parsePanes("%7\t0\tapi\t1\t120\t34\tnvim\t/home/bangwu/code/tmuapp\n")).toEqual([
+    expect(parsePanes("%7|0|api|1|120|34|nvim|/home/bangwu/code/tmuapp\n")).toEqual([
       {
         id: "%7",
         index: 0,
