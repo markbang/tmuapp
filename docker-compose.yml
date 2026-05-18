@@ -1,13 +1,13 @@
 services:
   tmuapp:
-    build: .
-    image: ghcr.io/bangwu/tmuapp:local
+    image: ghcr.io/markbang/tmuapp:latest
     ports:
       - "8787:8787"
     environment:
       PORT: "8787"
-      # Set TMUAPP_TOKEN before exposing tmuapp outside a trusted local network.
-      # TMUAPP_TOKEN: "change-me"
+      TMUAPP_TOKEN_ADMIN: "change-me"
+      # TMUAPP_TOKEN_READ: "read-only-token"
+      # TMUAPP_CORS_ORIGINS: "https://tmux.example.com"
     healthcheck:
       test:
         [
@@ -20,5 +20,4 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
-    volumes:
-      - /tmp:/tmp
+    restart: unless-stopped

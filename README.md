@@ -86,19 +86,60 @@ Run Claude Code, Codex, or another coding agent inside tmux. When you leave your
 
 The Android app is meant to be a companion monitor, not a full mobile terminal. It is best for checking status, reading recent output, and sending small, low-risk actions.
 
+## Deployment
+
+### Docker Compose
+
+```bash
+docker compose up -d
+```
+
+### Tailscale (recommended for remote access)
+
+```bash
+# On the machine running tmuapp:
+tailscale serve --https=443 8787
+
+# Access from anywhere on your tailnet:
+# https://<machine-name>.tailnet-name.ts.net
+```
+
+### Cloudflare Tunnel
+
+```bash
+cloudflared tunnel create tmuapp
+cloudflared tunnel route dns tmuapp tmux.example.com
+cloudflared tunnel run --url http://localhost:8787 tmuapp
+```
+
+### nginx reverse proxy
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name tmux.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/tmux.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/tmux.example.com/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8787;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_read_timeout 86400;
+    }
+}
+```
+
 ## Security
 
-`tmuapp` can send input to real shells through tmux. Treat write access like SSH access.
+`tmuapp` can send input to real shells through tmux. Treat write access like SSH.
 
-Recommended precautions:
-
-- Do not expose tmuapp directly to the public internet.
-- Always configure a token.
-- Prefer Tailscale, a VPN, Cloudflare Tunnel, or an HTTPS reverse proxy.
-- Use read-only or low-privilege tokens for monitoring-only clients when possible.
-- Never commit tokens to a repository or share them in screenshots.
-
-For API and deployment details, see [`docs/API.md`](docs/API.md).
+- Always set `TMUAPP_TOKEN_ADMIN` (and `TMUAPP_TOKEN_READ` for monitoring-only clients).
+- Never expose tmuapp directly to the public internet without HTTPS + auth.
+- For API details and token levels, see [`docs/API.md`](docs/API.md).
 
 ## Project direction
 
