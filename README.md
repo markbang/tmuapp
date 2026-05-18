@@ -41,26 +41,30 @@ You may want tmuapp if:
 
 ## Quick start
 
-### Native install (recommended — like Tailscale)
+### Native install — for daily tmux users
+
+Install as a system service (systemd / launchd), auto-starts on boot:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/markbang/tmuapp/main/scripts/install.sh | bash
 ```
 
-This installs tmuapp as a system service (systemd on Linux, launchd on macOS),
-generates secure tokens, and starts automatically on boot.
+Opens **http://localhost:8787**. Your existing tmux sessions appear immediately.
+Uninstall: `sudo systemctl disable --now tmuapp && rm -rf ~/.tmuapp`.
 
-Then open: **http://localhost:8787**
+### Docker — for isolated or trial use
 
-### Docker (optional)
+Runs in a container with its own tmux server. Nothing touches your host tmux:
 
 ```bash
-docker run --rm \
+docker run -d --name tmuapp \
   -p 8787:8787 \
-  -v /var/run/tmux:/var/run/tmux \
   -e TMUAPP_TOKEN='change-this-token' \
   ghcr.io/markbang/tmuapp:latest
 ```
+
+Opens **http://localhost:8787**. Sessions live inside the container.
+Uninstall: `docker rm -f tmuapp`.
 
 For phone or remote access, run tmuapp behind Tailscale, a VPN, HTTPS reverse proxy, or Cloudflare Tunnel, and always use a strong token.
 
