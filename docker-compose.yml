@@ -1,4 +1,6 @@
 services:
+  # ── Mode 1: Isolated (default) ──
+  # Container runs its own tmux server. Nothing touches the host.
   tmuapp:
     image: ghcr.io/markbang/tmuapp:latest
     ports:
@@ -21,3 +23,23 @@ services:
       retries: 3
       start_period: 10s
     restart: unless-stopped
+
+  # ── Mode 2: Connect to host tmux ──
+  # Uncomment below and comment out the isolated service above.
+  # Mounts the host tmux socket so the container controls your real sessions.
+  # tmuapp-host:
+  #   image: ghcr.io/markbang/tmuapp:latest
+  #   ports:
+  #     - "8787:8787"
+  #   environment:
+  #     PORT: "8787"
+  #     TMUAPP_TOKEN_ADMIN: "change-me"
+  #   volumes:
+  #     - /tmp/tmux-1000:/tmp/tmux-1000  # adjust UID to match your user
+  #   healthcheck:
+  #     test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+  #     interval: 30s
+  #     timeout: 5s
+  #     retries: 3
+  #     start_period: 10s
+  #   restart: unless-stopped

@@ -54,16 +54,23 @@ Uninstall: `sudo systemctl disable --now tmuapp && rm -rf ~/.tmuapp`.
 
 ### Docker — for isolated or trial use
 
-Runs in a container with its own tmux server. Nothing touches your host tmux:
+**Isolated mode** (default): container runs its own tmux server, nothing touches the host:
+
+```bash
+docker compose up -d
+```
+
+**Host tmux mode**: mount the socket to see and control your real tmux sessions:
 
 ```bash
 docker run -d --name tmuapp \
   -p 8787:8787 \
-  -e TMUAPP_TOKEN='change-this-token' \
+  -v /tmp/tmux-$(id -u):/tmp/tmux-$(id -u) \
+  -e TMUAPP_TOKEN_ADMIN='change-this-token' \
   ghcr.io/markbang/tmuapp:latest
 ```
 
-Opens **http://localhost:8787**. Sessions live inside the container.
+Both open **http://localhost:8787**.
 Uninstall: `docker rm -f tmuapp`.
 
 For phone or remote access, run tmuapp behind Tailscale, a VPN, HTTPS reverse proxy, or Cloudflare Tunnel, and always use a strong token.
