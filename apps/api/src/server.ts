@@ -32,6 +32,8 @@ export function createApiServer(options: ApiServerOptions = {}) {
   const staticDir = options.staticDir ?? defaultStaticDir;
   const tokenConfig = options.tokenConfig ?? { admin: [], write: [], read: [] };
   const corsOrigin = options.corsOrigin ?? "";
+  const sendResponse = (response: ServerResponse, status: number, data: unknown) =>
+    send(response, status, data, corsOrigin);
 
   const tokenLevel = (token: string | undefined): TokenLevel | null => {
     if (!token) return null;
@@ -41,10 +43,11 @@ export function createApiServer(options: ApiServerOptions = {}) {
     return null;
   };
 
-  const authError = (response: ServerResponse) => send(response, 401, { error: "Unauthorized" });
+  const authError = (response: ServerResponse) =>
+    sendResponse(response, 401, { error: "Unauthorized" });
 
   const forbidden = (response: ServerResponse) =>
-    send(response, 403, { error: "Insufficient permissions" });
+    sendResponse(response, 403, { error: "Insufficient permissions" });
 
   const extractToken = (request: IncomingMessage, queryToken?: string | null) => {
     const auth = request.headers.authorization;
@@ -89,12 +92,12 @@ export function createApiServer(options: ApiServerOptions = {}) {
 
     try {
       if (request.method === "OPTIONS") {
-        send(response, 204, undefined);
+        sendResponse(response, 204, undefined);
         return;
       }
 
       if (request.method === "GET" && url.pathname === "/health") {
-        send(response, 200, { ok: true, service: "tmuapp-api" });
+        sendResponse(response, 200, { ok: true, service: "tmuapp-api" });
         return;
       }
 
@@ -111,14 +114,14 @@ export function createApiServer(options: ApiServerOptions = {}) {
 
       if (request.method === "GET" && url.pathname === "/api/sessions") {
         if (!requireLevel(level, "read", response)) return;
-        send(response, 200, await tmux.snapshot());
+        sendResponse(response, 200, await tmux.snapshot());
         return;
       }
 
       const paneCaptureTarget = match(url.pathname, /^\/api\/panes\/(.+)\/capture$/);
       if (request.method === "GET" && paneCaptureTarget) {
         if (!requireLevel(level, "read", response)) return;
-        send(
+        sendResponse(
           response,
           200,
           await tmux.capturePane(
@@ -135,7 +138,7 @@ export function createApiServer(options: ApiServerOptions = {}) {
         const body = await readJson<{ name?: string; cwd?: string }>(request);
         const result = await tmux.createSession(required(body.name, "name"), body.cwd);
         auditLog("create_session", body.name ?? "(unnamed)", extractToken(request));
-        send(response, 201, result);
+        sendResponse(response, 201, result);
         return;
       }
 
@@ -145,14 +148,18 @@ export function createApiServer(options: ApiServerOptions = {}) {
         const target = decodeURIComponent(sessionTarget);
         const result = await tmux.killSession(target);
         auditLog("kill_session", target, extractToken(request));
-        send(response, 200, result);
+        sendResponse(response, 200, result);
         return;
       }
 
       if (request.method === "POST" && url.pathname === "/api/windows") {
         if (!requireLevel(level, "write", response)) return;
         const body = await readJson<{ target?: string; name?: string }>(request);
-        send(response, 201, await tmux.createWindow(required(body.target, "target"), body.name));
+        sendResponse(
+          response,
+          201,
+          await tmux.createWindow(required(body.target, "target"), body.name),
+        );
         return;
       }
 
@@ -162,7 +169,7 @@ export function createApiServer(options: ApiServerOptions = {}) {
         const target = decodeURIComponent(windowTarget);
         const result = await tmux.killWindow(target);
         auditLog("kill_window", target, extractToken(request));
-        send(response, 200, result);
+        sendResponse(response, 200, result);
         return;
       }
 
@@ -175,7 +182,7 @@ export function createApiServer(options: ApiServerOptions = {}) {
           body.direction ?? "horizontal",
         );
         auditLog("split_pane", decodeURIComponent(paneSplitTarget), extractToken(request));
-        send(response, 201, result);
+        sendResponse(response, 201, result);
         return;
       }
 
@@ -186,7 +193,7 @@ export function createApiServer(options: ApiServerOptions = {}) {
         const target = decodeURIComponent(paneInputTarget);
         const result = await tmux.sendInput(target, required(body.data, "data"));
         auditLog("input", target, extractToken(request));
-        send(response, 200, result);
+        sendResponse(response, 200, result);
         return;
       }
 
@@ -197,7 +204,7 @@ export function createApiServer(options: ApiServerOptions = {}) {
         const target = decodeURIComponent(paneKeysTarget);
         const result = await tmux.sendKeys(target, body.keys ?? []);
         auditLog("keys", target, extractToken(request));
-        send(response, 200, result);
+        sendResponse(response, 200, result);
         return;
       }
 
@@ -208,13 +215,15 @@ export function createApiServer(options: ApiServerOptions = {}) {
         const target = decodeURIComponent(paneResizeTarget);
         const result = await tmux.resizePane(target, Number(body.width), Number(body.height));
         auditLog("resize", target, extractToken(request));
-        send(response, 200, result);
+        sendResponse(response, 200, result);
         return;
       }
 
-      send(response, 404, { error: "Not found" });
+      sendResponse(response, 404, { error: "Not found" });
     } catch (error) {
-      send(response, 400, { error: error instanceof Error ? error.message : "Request failed" });
+      sendResponse(response, 400, {
+        error: error instanceof Error ? error.message : "Request failed",
+      });
     }
   });
 
@@ -365,17 +374,16 @@ function contentType(file: string) {
   return types[extname(file)] ?? "application/octet-stream";
 }
 
-function send(response: ServerResponse, status: number, data: unknown) {
+function send(response: ServerResponse, status: number, data: unknown, corsOrigin = "") {
   const headers: Record<string, string> = {
     "Access-Control-Allow-Headers": "authorization,content-type,x-tmuapp-token",
     "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS",
     "Content-Type": "application/json; charset=utf-8",
   };
 
-  // Use configured CORS origin, default to same-origin (empty = browser-enforced)
-  const origin = process.env["TMUAPP_CORS_ORIGIN"];
-  if (origin) {
-    headers["Access-Control-Allow-Origin"] = origin;
+  // Empty means same-origin/browser-enforced CORS.
+  if (corsOrigin) {
+    headers["Access-Control-Allow-Origin"] = corsOrigin;
   }
 
   response.writeHead(status, headers);

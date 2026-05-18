@@ -12,6 +12,7 @@ RUN pnpm install --frozen-lockfile --ignore-scripts
 FROM deps AS build
 COPY . .
 RUN pnpm exec vp run -r build
+RUN pnpm --ignore-scripts --filter api deploy --legacy --prod /app/deploy/api
 
 FROM node:22-bookworm-slim AS runtime
 WORKDIR /app
@@ -21,12 +22,8 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends tmux \
   && rm -rf /var/lib/apt/lists/* \
   && corepack enable
-COPY --from=build /app/apps/api/dist ./apps/api/dist
-COPY --from=deps /app/apps/api/node_modules ./apps/api/node_modules
-COPY --from=build /app/apps/api/package.json ./apps/api/package.json
+COPY --from=build /app/deploy/api ./apps/api
 COPY --from=build /app/apps/website/dist ./apps/website/dist
-COPY --from=build /app/packages/utils/dist ./packages/utils/dist
-COPY --from=build /app/packages/utils/package.json ./packages/utils/package.json
 EXPOSE 8787
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || 8787) + '/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"

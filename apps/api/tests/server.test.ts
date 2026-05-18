@@ -39,7 +39,7 @@ let tmuxStream: FakeTmuxStream | undefined;
 async function startTestServer(
   options: {
     authToken?: string;
-    noTmuxServer?: boolean;
+    noTmuxServer?: boolean | string;
     staticDir?: string;
     stream?: FakeTmuxStream;
   } = {},
@@ -51,7 +51,11 @@ async function startTestServer(
 
     if (command === "list-sessions") {
       if (options.noTmuxServer) {
-        throw new Error("no server running on /tmp/tmux-1000/default");
+        throw new Error(
+          typeof options.noTmuxServer === "string"
+            ? options.noTmuxServer
+            : "no server running on /tmp/tmux-1000/default",
+        );
       }
 
       return { stdout: "$1\twork\t1\t1\t1778490000\n", stderr: "" };
@@ -146,6 +150,20 @@ describe("api server", () => {
       server?.close((error?: Error) => (error ? reject(error) : resolve())),
     );
     await startTestServer({ noTmuxServer: true });
+
+    const response = await fetch(`${baseUrl}/api/sessions`);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ sessions: [], windows: {}, panes: {} });
+  });
+
+  test("returns an empty snapshot when tmux socket is missing", async () => {
+    await new Promise<void>((resolve, reject) =>
+      server?.close((error?: Error) => (error ? reject(error) : resolve())),
+    );
+    await startTestServer({
+      noTmuxServer: "error connecting to /tmp/tmux-0/default (No such file or directory)",
+    });
 
     const response = await fetch(`${baseUrl}/api/sessions`);
 

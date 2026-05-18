@@ -188,7 +188,11 @@ async function listSessions(run: TmuxRunner) {
 }
 
 function isNoTmuxServer(error: unknown) {
-  return error instanceof Error && /no server running/u.test(error.message);
+  return (
+    error instanceof Error &&
+    (/no server running/u.test(error.message) ||
+      /error connecting to .*\(No such file or directory\)/u.test(error.message))
+  );
 }
 
 function validateName(name: string) {
