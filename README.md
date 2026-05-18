@@ -60,10 +60,11 @@ Uninstall: `sudo systemctl disable --now tmuapp && rm -rf ~/.tmuapp`.
 docker compose up -d
 ```
 
-**Host tmux mode**: mount the socket to see and control your real tmux sessions:
+**Host tmux mode**: mount the socket to see and control your real tmux sessions (UID auto-detected):
 
 ```bash
 docker run -d --name tmuapp \
+  --user "$(id -u):$(id -g)" \
   -p 8787:8787 \
   -v /tmp/tmux-$(id -u):/tmp/tmux-$(id -u) \
   -e TMUAPP_TOKEN_ADMIN='change-this-token' \
