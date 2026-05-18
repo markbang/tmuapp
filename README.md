@@ -41,19 +41,25 @@ You may want tmuapp if:
 
 ## Quick start
 
-You need Docker on the machine that should run tmuapp:
+### Native install (recommended — like Tailscale)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/markbang/tmuapp/main/scripts/install.sh | bash
+```
+
+This installs tmuapp as a system service (systemd on Linux, launchd on macOS),
+generates secure tokens, and starts automatically on boot.
+
+Then open: **http://localhost:8787**
+
+### Docker (optional)
 
 ```bash
 docker run --rm \
   -p 8787:8787 \
+  -v /var/run/tmux:/var/run/tmux \
   -e TMUAPP_TOKEN='change-this-token' \
   ghcr.io/markbang/tmuapp:latest
-```
-
-Then open:
-
-```text
-http://localhost:8787
 ```
 
 For phone or remote access, run tmuapp behind Tailscale, a VPN, HTTPS reverse proxy, or Cloudflare Tunnel, and always use a strong token.
