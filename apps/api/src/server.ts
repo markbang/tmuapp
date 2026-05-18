@@ -101,8 +101,6 @@ export function createApiServer(options: ApiServerOptions = {}) {
         return;
       }
 
-      const level = requireAuth(request, response, url.searchParams.get("token"));
-
       // ── Read-only routes ──────────────────────────────────────
       if (
         request.method === "GET" &&
@@ -111,6 +109,8 @@ export function createApiServer(options: ApiServerOptions = {}) {
       ) {
         return;
       }
+
+      const level = requireAuth(request, response, url.searchParams.get("token"));
 
       if (request.method === "GET" && url.pathname === "/api/sessions") {
         if (!requireLevel(level, "read", response)) return;

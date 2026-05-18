@@ -135,6 +135,21 @@ describe("api server", () => {
     expect(await response.text()).toContain('<div id="app"></div>');
   });
 
+  test("serves static app assets without a token when auth is configured", async () => {
+    await new Promise<void>((resolve, reject) =>
+      server?.close((error?: Error) => (error ? reject(error) : resolve())),
+    );
+    staticDir = mkdtempSync(join(tmpdir(), "tmuapp-static-"));
+    writeFileSync(join(staticDir, "index.html"), '<div id="app"></div>');
+    await startTestServer({ authToken: "secret", staticDir });
+
+    const response = await fetch(`${baseUrl}/`);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/html");
+    expect(await response.text()).toContain('<div id="app"></div>');
+  });
+
   test("serves tmux session snapshot", async () => {
     const response = await fetch(`${baseUrl}/api/sessions`);
     const data = await response.json();
