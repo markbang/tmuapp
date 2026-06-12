@@ -31,6 +31,7 @@ async function openSessionManager(page: Page) {
   await expect(sessionCard).toContainText("work");
   await sessionCard.click();
   await expect(page.getByText("Tmux Terminal").first()).toBeVisible();
+  await expect(page.locator("#terminal textarea")).toBeFocused();
 }
 
 async function focusTerminal(page: Page) {

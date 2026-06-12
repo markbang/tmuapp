@@ -21,6 +21,7 @@
 
 .panel-card {
   width: min(460px, 100%);
+  max-height: min(100%, calc(100svh - 112px));
   display: grid;
   gap: 14px;
   border: 1px solid var(--hairline-strong);
@@ -32,6 +33,7 @@
     0 0 0 1px var(--hairline-strong),
     0 4px 16px rgba(0, 0, 0, 0.3);
   animation: panel-card-enter 250ms ease;
+  overflow: auto;
 }
 
 @keyframes panel-card-enter {
@@ -63,9 +65,7 @@
 }
 
 .notice {
-  position: absolute;
-  top: 12px;
-  right: 20px;
+  position: static;
   z-index: 30;
   width: min(520px, calc(100vw - 40px));
   display: grid;
@@ -75,6 +75,7 @@
   border: 1px solid var(--hairline-strong);
   border-radius: 8px;
   padding: 12px;
+  margin: 0 0 16px;
   color: var(--ink);
   background: var(--surface-2);
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35);

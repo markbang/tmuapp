@@ -15,16 +15,13 @@
   .dashboard-actions {
     gap: 14px;
   }
-
-  .metric-bar {
-    display: none;
-  }
 }
 
 @media (max-width: 560px) {
   .dashboard-actions {
     width: 100%;
     justify-content: flex-end;
+    flex-wrap: wrap;
   }
 
   .dashboard-main {
@@ -39,8 +36,11 @@
   }
 
   .dashboard-footer {
+    height: auto;
+    padding-top: 6px;
+    padding-bottom: 6px;
     gap: 8px;
-    padding: 0 10px;
+    align-items: flex-start;
   }
 
   .footer-status {

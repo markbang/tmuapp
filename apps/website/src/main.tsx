@@ -8,6 +8,7 @@ import { apiLabel, apiTokenStorageKey, request, streamUrl } from "./api/client";
 import { detectAgentState } from "./agent-detector";
 import { InlineLoading } from "./components/InlineLoading";
 import { NoticeBanner } from "./components/NoticeBanner";
+import { ConfirmSessionDelete } from "./components/ConfirmSessionDelete";
 import { SessionGrid } from "./components/SessionGrid";
 import { TokenPanel } from "./components/TokenPanel";
 import {
@@ -49,6 +50,7 @@ function App() {
   const [notice, setNotice] = useState<Notice>();
   const [operation, setOperation] = useState<Operation>();
   const [showTokenSettings, setShowTokenSettings] = useState(false);
+  const [sessionToDelete, setSessionToDelete] = useState<string | undefined>();
   const [tokenDraft, setTokenDraft] = useState(
     () => localStorage.getItem(apiTokenStorageKey) ?? "",
   );
@@ -67,6 +69,8 @@ function App() {
   const resizeTimer = useRef<number | undefined>(undefined);
   const lastResize = useRef<string | undefined>(undefined);
   const terminalCellMetrics = useRef<TerminalCellMetrics | undefined>(undefined);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+  const previewConcurrencyRef = useRef(0);
 
   const sessions = snapshot?.sessions ?? [];
   const selectedSession = currentSession(snapshot, selection.session);
@@ -122,6 +126,7 @@ function App() {
       fitTerminalToContainer(terminal.current, terminalCellMetrics);
       setFitSize(`${terminal.current.cols}x${terminal.current.rows}`);
       scheduleResizeActivePane(terminal.current.cols, terminal.current.rows);
+      terminal.current.focus();
       return terminal.current;
     },
     [scheduleResizeActivePane],
@@ -391,6 +396,8 @@ function App() {
   }, [sendTerminalData]);
 
   const createSession = useCallback(async () => {
+    returnFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const name = defaultSessionName();
     setOperation("create");
     try {
@@ -429,8 +436,23 @@ function App() {
     [applySnapshot],
   );
 
+  const requestDeleteSession = useCallback((sessionId: string) => {
+    returnFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setSessionToDelete(sessionId);
+  }, []);
+
+  const confirmDeleteSession = useCallback(async () => {
+    if (!sessionToDelete) return;
+    const sessionId = sessionToDelete;
+    setSessionToDelete(undefined);
+    await deleteSession(sessionId);
+  }, [deleteSession, sessionToDelete]);
+
   const openSession = useCallback(
     (sessionId: string) => {
+      returnFocusRef.current =
+        document.activeElement instanceof HTMLElement ? document.activeElement : null;
       const nextSelection = reconcileSelection(snapshot, { session: sessionId });
       setSelection(nextSelection);
       setView("manage");
@@ -468,6 +490,9 @@ function App() {
 
   useEffect(() => {
     if (view !== "manage") {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = undefined;
+      reconnectAttemptRef.current = 0;
       terminalStream.current?.close();
       terminalStream.current = undefined;
       streamedPane.current = undefined;
@@ -482,6 +507,14 @@ function App() {
       void connectTerminalStream(selection.pane);
     }
   }, [connectTerminalStream, selection.pane, view]);
+
+  useEffect(() => {
+    if (view !== "overview") return;
+    const target = returnFocusRef.current;
+    returnFocusRef.current = null;
+    if (!target) return;
+    requestAnimationFrame(() => target.focus());
+  }, [view]);
 
   useEffect(() => {
     const fitTerminal = () => {
@@ -501,6 +534,13 @@ function App() {
   }, []);
 
   useEffect(() => {
+    return () => {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = undefined;
+    };
+  }, []);
+
+  useEffect(() => {
     if (view !== "overview" || !snapshot) return;
 
     let cancelled = false;
@@ -513,37 +553,53 @@ function App() {
       return next;
     });
 
-    void Promise.all(
-      snapshot.sessions.map(async (session) => {
+    const queue = [...snapshot.sessions];
+    const nextEntries: Array<readonly [string, PreviewState]> = [];
+    const limit = 3;
+
+    const pump = async () => {
+      while (!cancelled && queue.length > 0) {
+        const session = queue.shift();
+        if (!session) continue;
+
         const pane = firstPaneForSession(snapshot, session.id);
         if (!pane) {
-          return [
-            session.id,
-            { text: "No panes", status: "empty" } satisfies PreviewState,
-          ] as const;
+          nextEntries.push([session.id, { text: "No panes", status: "empty" } satisfies PreviewState]);
+          continue;
         }
 
         try {
           const capture = await request<CaptureResult>(
             `/api/panes/${encodeURIComponent(pane.id)}/capture?lines=8`,
           );
-          return [
+          nextEntries.push([
             session.id,
             { text: previewText(capture.ansi), status: "ready" } satisfies PreviewState,
-          ] as const;
+          ]);
         } catch {
-          return [
+          nextEntries.push([
             session.id,
             {
               text: pane.currentCommand || pane.currentPath || pane.id,
               status: "fallback",
             } satisfies PreviewState,
-          ] as const;
+          ]);
         }
-      }),
-    ).then((entries) => {
+      }
+    };
+
+    const workers = Array.from({ length: Math.min(limit, snapshot.sessions.length) }, async () => {
+      previewConcurrencyRef.current += 1;
+      try {
+        await pump();
+      } finally {
+        previewConcurrencyRef.current -= 1;
+      }
+    });
+
+    void Promise.all(workers).then(() => {
       if (cancelled || run !== previewRun) return;
-      setSessionPreviews((current) => ({ ...current, ...Object.fromEntries(entries) }));
+      setSessionPreviews((current) => ({ ...current, ...Object.fromEntries(nextEntries) }));
     });
 
     return () => {
@@ -564,6 +620,15 @@ function App() {
           />
         ) : null}
 
+        {sessionToDelete ? (
+          <ConfirmSessionDelete
+            isDeleting={operation === "kill"}
+            sessionName={snapshot?.sessions.find((session) => session.id === sessionToDelete)?.name ?? sessionToDelete}
+            onCancel={() => setSessionToDelete(undefined)}
+            onConfirm={() => void confirmDeleteSession()}
+          />
+        ) : null}
+
         {view === "overview" ? (
           <SessionGrid
             status={status}
@@ -575,7 +640,7 @@ function App() {
             onConfigureToken={configureApiToken}
             onRetry={() => void refresh("manual")}
             onCreate={() => void createSession()}
-            onDelete={(id) => void deleteSession(id)}
+            onDelete={(id) => requestDeleteSession(id)}
             onOpen={openSession}
           />
         ) : null}
@@ -602,7 +667,6 @@ function App() {
               <div
                 className={`terminal-wrap${terminalStatus === "loading" ? " switching" : ""}`}
                 id="terminal-panel"
-                role="tabpanel"
               >
                 {terminalStatus === "loading" ? (
                   <InlineLoading label="Preparing terminal…" />

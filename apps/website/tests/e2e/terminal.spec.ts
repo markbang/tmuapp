@@ -455,6 +455,7 @@ async function openSessionManager(page: Page, previewText = "from mocked tmux") 
   await sessionCard.click();
   // New design: header shows "Tmux Terminal"
   await expect(page.getByText("Tmux Terminal")).toBeVisible();
+  await expect(page.locator("#terminal textarea")).toBeFocused();
 }
 
 async function mockTmuxApi(

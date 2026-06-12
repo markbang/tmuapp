@@ -18,18 +18,17 @@ export function SessionGrid(props: {
   onDelete: (sessionId: string) => void;
   onOpen: (sessionId: string) => void;
 }) {
-  const [cpuUsage, setCpuUsage] = useState(42);
-  const [memUsage, setMemUsage] = useState(68);
   const [time, setTime] = useState(() => currentTime());
 
   useEffect(() => {
     const interval = window.setInterval(() => {
-      setCpuUsage((value) => clamp(value + Math.random() * 10 - 5));
-      setMemUsage((value) => clamp(value + Math.random() * 4 - 2));
       setTime(currentTime());
     }, 2000);
     return () => window.clearInterval(interval);
   }, []);
+
+  const selectedSessionName =
+    props.sessions.find((session) => session.id === props.selectedSession)?.name ?? "None";
 
   return (
     <div className="dashboard">
@@ -40,11 +39,12 @@ export function SessionGrid(props: {
             <span>Tmux Web Panel</span>
           </div>
           <div className="dashboard-divider" />
-          <div className="dashboard-kicker">Manager Dash</div>
+          <div className="dashboard-kicker">Overview</div>
         </div>
         <div className="dashboard-actions">
-          <MetricBar label="CPU" value={cpuUsage} />
-          <MetricBar label="MEM" value={memUsage} />
+          <span className="dashboard-summary">
+            {props.sessions.length} session{props.sessions.length === 1 ? "" : "s"}
+          </span>
           <Button className="dashboard-token-button" type="button" onPress={props.onConfigureToken}>
             Token
           </Button>
@@ -85,7 +85,7 @@ export function SessionGrid(props: {
             <p>Create a new window to get started.</p>
             <Button className="empty-create-button" type="button" onPress={props.onCreate}>
               <span aria-hidden="true">+</span>
-              CREATE_WINDOW
+              Create Window
             </Button>
           </div>
         ) : null}
@@ -99,47 +99,56 @@ export function SessionGrid(props: {
               };
               const pane = firstPaneForSession(props.snapshot, session.id);
               const name = session.name || `Window ${index + 1}`;
+              const titleId = `session-title-${session.id}`;
+              const summaryId = `session-summary-${session.id}`;
 
               return (
-                <Button
+                <div
                   key={session.id}
                   className={`session-card ${session.id === props.selectedSession ? "selected" : ""}`}
                   data-session-card={session.id}
-                  type="button"
-                  aria-label={`Open session ${name}`}
-                  onPress={() => props.onOpen(session.id)}
                 >
                   <span className="session-card-bar">
-                    <span className="session-card-name">
-                      {index}: {name}*
+                    <span className="session-card-name" id={titleId}>
+                      {index}: {name}
                     </span>
                     <span className="session-card-controls">
-                      <span className="active-badge">Active</span>
+                      <span className="active-badge">{session.attached ? "Attached" : "Detached"}</span>
                       <button
                         className="session-delete-button"
                         type="button"
                         aria-label={`Delete ${name}`}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          props.onDelete(session.id);
-                        }}
+                        onClick={() => props.onDelete(session.id)}
                       >
                         ×
                       </button>
                     </span>
                   </span>
-                  <span className="session-preview-pane">
-                    <span className="session-id-label">ID: {session.id}</span>
-                    {preview.status === "ready" ? (
-                      <pre className="session-preview-text">{preview.text}</pre>
-                    ) : (
-                      <TerminalPreviewFallback command={pane?.currentCommand} />
-                    )}
-                    <span className="preview-spacer" />
-                    <span className="preview-tilde">~</span>
-                    <span className="preview-tilde">~</span>
-                  </span>
-                </Button>
+                  <button
+                    className={`session-open-button ${session.id === props.selectedSession ? "selected" : ""}`}
+                    type="button"
+                    data-session-open={session.id}
+                    aria-labelledby={titleId}
+                    aria-describedby={summaryId}
+                    onClick={() => props.onOpen(session.id)}
+                  >
+                    <span className="session-preview-pane">
+                      <span className="session-id-label">ID: {session.id}</span>
+                      <span className="session-preview-summary" id={summaryId}>
+                        {pane?.currentPath ?? "No path"}{" "}
+                        {pane?.currentCommand ? `• ${pane.currentCommand}` : "• Waiting for output…"}
+                      </span>
+                      {preview.status === "ready" ? (
+                        <pre className="session-preview-text">{preview.text}</pre>
+                      ) : (
+                        <TerminalPreviewFallback
+                          command={pane?.currentCommand}
+                          path={pane?.currentPath}
+                        />
+                      )}
+                    </span>
+                  </button>
+                </div>
               );
             })}
 
@@ -158,14 +167,13 @@ export function SessionGrid(props: {
           <div className="footer-tabs">
             {props.sessions.map((session, index) => (
               <button key={session.id} type="button" onClick={() => props.onOpen(session.id)}>
-                <span>[{index}]</span> {session.name}*
+                <span>[{index}]</span> {session.name}
               </button>
             ))}
           </div>
           <div className="footer-status">
-            <span>"Ubuntu 22.04"</span>
+            <span>Selected: {selectedSessionName}</span>
             <span>{time}</span>
-            <span className="ctrl-b-badge">CTRL-B</span>
           </div>
         </footer>
       ) : null}
@@ -173,37 +181,16 @@ export function SessionGrid(props: {
   );
 }
 
-function MetricBar(props: { label: string; value: number }) {
-  return (
-    <div className="metric-bar">
-      <span>{props.label}</span>
-      <div>
-        <i style={{ width: `${props.value}%` }} />
-      </div>
-    </div>
-  );
-}
-
-function TerminalPreviewFallback(props: { command: string | undefined }) {
+function TerminalPreviewFallback(props: { command: string | undefined; path: string | undefined }) {
   return (
     <span className="terminal-preview-fallback">
-      <span>
-        <b>root@prod</b>:<i>~</i>$ {props.command || "ls -la"}
-      </span>
-      <span>total 24</span>
-      <span>drwxr-xr-x 2 root root 4096</span>
-      <span>-rw-r--r-- 1 root root 220</span>
-      <span>
-        <b>root@prod</b>:<i>~</i>$ <em />
-      </span>
+      <span>{props.path ?? "~"}</span>
+      <span>$ {props.command ?? "Waiting for output…"}</span>
+      <span>Preview unavailable</span>
     </span>
   );
 }
 
 function currentTime() {
   return new Date().toLocaleTimeString("en-GB", { hour12: false });
-}
-
-function clamp(value: number) {
-  return Math.min(100, Math.max(0, value));
 }

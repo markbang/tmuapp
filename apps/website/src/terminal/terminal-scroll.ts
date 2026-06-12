@@ -29,20 +29,7 @@ export function scrollTerminalToBottom(element: HTMLElement | null) {
     return;
   }
 
-  const target = element.scrollHeight;
-  if ("scrollBehavior" in document.documentElement.style) {
-    element.scrollTo({ top: target, behavior: "smooth" });
-  } else {
-    element.scrollTop = target;
-  }
-
-  // Double-check: some browsers may not complete smooth scroll
-  // in one frame, especially when content is still arriving.
-  requestAnimationFrame(() => {
-    if (Math.abs(element.scrollHeight - element.clientHeight - element.scrollTop) > 2) {
-      element.scrollTop = element.scrollHeight;
-    }
-  });
+  element.scrollTop = element.scrollHeight;
 }
 
 export function isScrolledToBottom(element: HTMLElement) {

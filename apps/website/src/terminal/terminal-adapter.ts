@@ -1,10 +1,5 @@
 import { Terminal } from "@xterm/xterm";
-import { ImageAddon } from "@xterm/addon-image";
-import { LigaturesAddon } from "@xterm/addon-ligatures";
-import { SearchAddon } from "@xterm/addon-search";
-import { Unicode11Addon } from "@xterm/addon-unicode11";
-import { WebLinksAddon } from "@xterm/addon-web-links";
-import { WebglAddon } from "@xterm/addon-webgl";
+import type { SearchAddon } from "@xterm/addon-search";
 
 export interface TermAdapter {
   readonly cols: number;
@@ -84,6 +79,13 @@ export function createTerminal(element: HTMLElement, options: TermAdapterOptions
   });
 
   let searchAddon: SearchAddon | undefined;
+  let opened = false;
+  let pendingFocus = false;
+
+  // Expose early so callers can request focus before async addon loading
+  // completes. xterm.js will apply the focus after the terminal opens.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (element as any)._xtermInstance = term;
 
   if (options.onData) {
     // onData fires for ALL terminal output bytes: printable characters,
@@ -97,8 +99,6 @@ export function createTerminal(element: HTMLElement, options: TermAdapterOptions
   if (options.onResize) {
     term.onResize(({ cols, rows }) => options.onResize?.(cols, rows));
   }
-
-  let opened = false;
 
   return {
     get cols() {
@@ -123,6 +123,7 @@ export function createTerminal(element: HTMLElement, options: TermAdapterOptions
     async init() {
       if (opened) return;
       try {
+        const { WebglAddon } = await import("@xterm/addon-webgl");
         const webglAddon = new WebglAddon();
         term.loadAddon(webglAddon);
       } catch {
@@ -130,6 +131,7 @@ export function createTerminal(element: HTMLElement, options: TermAdapterOptions
       }
 
       try {
+        const { LigaturesAddon } = await import("@xterm/addon-ligatures");
         const ligaturesAddon = new LigaturesAddon();
         term.loadAddon(ligaturesAddon);
       } catch {
@@ -137,6 +139,7 @@ export function createTerminal(element: HTMLElement, options: TermAdapterOptions
       }
 
       try {
+        const { ImageAddon } = await import("@xterm/addon-image");
         const imageAddon = new ImageAddon({
           sixelSupport: true,
           sixelSizeLimit: 20000000,
@@ -149,6 +152,7 @@ export function createTerminal(element: HTMLElement, options: TermAdapterOptions
       }
 
       try {
+        const { SearchAddon } = await import("@xterm/addon-search");
         searchAddon = new SearchAddon();
         term.loadAddon(searchAddon);
         if (options.onSearchResults) {
@@ -161,12 +165,14 @@ export function createTerminal(element: HTMLElement, options: TermAdapterOptions
       }
 
       try {
+        const { Unicode11Addon } = await import("@xterm/addon-unicode11");
         term.loadAddon(new Unicode11Addon());
       } catch {
         // Unicode 11 unavailable — non-critical.
       }
 
       try {
+        const { WebLinksAddon } = await import("@xterm/addon-web-links");
         term.loadAddon(
           new WebLinksAddon((_event, uri) => {
             window.open(uri, "_blank", "noopener");
@@ -178,6 +184,10 @@ export function createTerminal(element: HTMLElement, options: TermAdapterOptions
 
       term.open(element);
       opened = true;
+      if (pendingFocus) {
+        pendingFocus = false;
+        term.focus();
+      }
 
       // Auto-copy selected text to clipboard with a brief indigo flash
       // as confirmation — matches native terminal behaviour.
@@ -212,6 +222,10 @@ export function createTerminal(element: HTMLElement, options: TermAdapterOptions
     },
 
     focus() {
+      if (!opened) {
+        pendingFocus = true;
+        return;
+      }
       term.focus();
     },
 
